@@ -1,31 +1,43 @@
 import { LLMService } from "../model/llm-service";
-import { McpHub } from "../control/mcp-hub";
+import { ToolRegistry } from "../execution/tool-registry";
 import { TaskManager } from "../control/manager";
+import { TeamOrchestrator } from "../team/orchestrator";
 import { Plan } from "../control/types";
 import { logger } from "../logger";
 import { AgentFactory } from "../agent/factory";
+import { AgentMessage } from "../agent/types";
+import { addMemory, searchMemory } from "../memory/manager";
+import { TriageAgent } from "./triage";
 import {
   generateOutputPrompt,
   generatePlannerPrompt,
   PLANNER_SYSTEM_PROMPT,
 } from "../prompts/planner";
-import { addMemory } from "../memory/manager"; // Import persistence function
+
+import { FileSessionStore } from "../memory/file-store";
 
 export class Planner {
   private llmService: LLMService;
-  private mcpHub: McpHub;
+  private toolRegistry: ToolRegistry;
   private taskManager: TaskManager;
+  private teamOrchestrator: TeamOrchestrator;
   private agentFactory: AgentFactory;
+  private triageAgent: TriageAgent;
+  public sessionStore: FileSessionStore;
 
   constructor(
     llmService: LLMService,
-    mcpHub: McpHub,
+    toolRegistry: ToolRegistry,
     taskManager: TaskManager,
+    teamOrchestrator: TeamOrchestrator,
   ) {
     this.llmService = llmService;
-    this.mcpHub = mcpHub;
+    this.toolRegistry = toolRegistry;
     this.taskManager = taskManager;
-    this.agentFactory = new AgentFactory(llmService, mcpHub);
+    this.teamOrchestrator = teamOrchestrator;
+    this.agentFactory = new AgentFactory(llmService, toolRegistry);
+    this.triageAgent = new TriageAgent(llmService);
+    this.sessionStore = new FileSessionStore(llmService);
   }
 
   public async processInput(
@@ -37,75 +49,209 @@ export class Planner {
           | { type: "image_url"; image_url: { url: string } }
         >,
     modelConfig: any,
-    onStream?: (chunk: string) => void, // Add streaming callback support
+    onStream?: (chunk: string) => void,
+    rawSessionId: string = "global",
   ): Promise<string> {
+    const sessionId = rawSessionId || "global";
+
     // 1. Create Input Agent for this device
     const inputAgent = this.agentFactory.createInputAgent(deviceId);
 
-    // Pass model config to agent (IMPORTANT FIX)
-    // Force stream=false for internal processing to avoid async complexity in current flow
-    // The Planner needs the full response to proceed.
+    // Load History
+    const history = await this.sessionStore.loadSession(sessionId);
+
+    // RAG: Search Long-Term Memory
+    let memoryContext = "";
+    try {
+      const textContent = typeof content === "string" ? content : "User Input";
+      const relevantMemories = await searchMemory(textContent, {
+        limit: 5,
+        sessionId,
+      });
+      if (relevantMemories.length > 0) {
+        memoryContext = `\n\n[Relevant Long-Term Memory]:\n${relevantMemories.map((m) => `- ${m.content} (Source: ${m.source})`).join("\n")}`;
+      }
+    } catch (e) {
+      logger.warn("Failed to search memory", e);
+    }
+
+    if (history.length > 0 || memoryContext) {
+      inputAgent.setHistory([
+        {
+          role: "system",
+          content: inputAgent.config.systemPrompt + memoryContext,
+        },
+        ...history,
+      ]);
+    }
+
+    // Pass model config to agent
     const internalConfig = { ...modelConfig, stream: false };
     inputAgent.config.modelConfig = internalConfig;
 
     // 2. Process raw input to understand intent
-    // Note: Logging full content might be too verbose if it contains base64 images
     const logContent =
       typeof content === "string" ? content : "Multimodal content";
     logger.info(`Processing input from ${deviceId}: ${logContent}`);
 
-    // Persist user input to DB (Memory)
+    // Emit initial status
+    if (onStream) {
+      onStream("\n*Thinking (Analyzing Request)...*\n");
+    }
+
+    // Persist user input to Memory (Vector) and File
+    const textContent =
+      typeof content === "string" ? content : "[Multimodal Content]";
+
+    // Vector DB (RAG)
     try {
-      const textContent =
-        typeof content === "string" ? content : "[Multimodal Content]";
-      // Ensure content is not empty string
       if (textContent && textContent.trim().length > 0) {
-        await addMemory(textContent, "user", "user", ["interaction", deviceId]);
+        await addMemory(
+          textContent,
+          "user",
+          "user",
+          ["interaction", deviceId],
+          sessionId,
+        );
       }
     } catch (e) {
-      logger.error("Failed to persist input message", e);
+      logger.error("Failed to persist input to vector memory", e);
+    }
+
+    // File Session
+    try {
+      if (textContent && textContent.trim().length > 0) {
+        await this.sessionStore.appendMessage(sessionId, {
+          role: "user",
+          content: content,
+        });
+      }
+    } catch (e) {
+      logger.error("Failed to persist input to file session", e);
     }
 
     const refinedIntent = await inputAgent.process(content);
     logger.info(`Refined intent: ${refinedIntent}`);
 
-    // 3. Create Plan based on refined intent
-    // Also use non-streaming config for planner
-    const plan = await this.createPlanFromGoal(refinedIntent, internalConfig);
+    // 3. Triage (Simple vs Complex)
+    const contextHistory = history
+      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n");
+    const fullContext = `User Device: ${deviceId}\nSession ID: ${sessionId}\n\nRecent History:\n${contextHistory}`;
 
-    // 4. Execute Plan
-    logger.info(`Executing plan for goal: ${plan.goal}`);
+    const triageResult = await this.triageAgent.evaluate(
+      refinedIntent,
+      fullContext,
+      internalConfig,
+    );
 
-    // Notify device about execution start (optional)
-    // this.mcpHub.sendToDevice(deviceId, { type: 'status', payload: { status: 'executing', plan: plan.goal } });
+    logger.info(`Triage Result: ${JSON.stringify(triageResult)}`);
 
-    const results = await this.taskManager.executePlan();
+    if (!triageResult.isComplex) {
+      // Direct Reply
+      logger.info("Handling as simple task (Direct Reply)");
+      const response = triageResult.directResponse || "I see.";
 
-    // Send intermediate results back if needed?
-    // For now, we rely on the final Output Agent to summarize.
+      if (onStream) {
+        onStream(response);
+      }
 
-    // Debug execution results
-    logger.debug(`Plan execution results: ${JSON.stringify(results)}`);
+      // Persist to Vector Memory
+      try {
+        await addMemory(
+          response,
+          "user",
+          "assistant",
+          ["interaction", deviceId],
+          sessionId,
+        );
+      } catch (e) {
+        logger.error("Failed to persist simple response to vector memory", e);
+      }
 
-    // Persist agent execution results to memory (optional but useful for context)
-    // Maybe store as a system thought/action log?
+      // Persist to File Session
+      try {
+        await this.sessionStore.appendMessage(sessionId, {
+          role: "assistant",
+          content: response,
+        });
+      } catch (e) {
+        logger.error("Failed to persist simple response to file session", e);
+      }
+      return response;
+    }
+
+    // 4. Complex Task -> Team Orchestrator (Swarm Mode)
+
+    // Status callback wrapper
+    const onStatusUpdate = (status: string) => {
+      logger.info(`[TeamManager] ${status}`);
+      if (onStream) {
+        onStream(`\n*${status}*\n`);
+      }
+    };
+
+    const onSwarmEvent = (event: any) => {
+      if (onStream) {
+        (onStream as any)(event);
+      }
+    };
+
+    const teamResult = await this.teamOrchestrator.executeMission(
+      refinedIntent,
+      fullContext,
+      internalConfig,
+      onStatusUpdate,
+      onSwarmEvent,
+      sessionId,
+      async (content) => {
+        // Real-time logging to session file
+        try {
+          await this.sessionStore.appendMessage(sessionId, {
+            role: "system",
+            content: content,
+          });
+        } catch (e) {
+          logger.error("Failed to append real-time log to session", e);
+        }
+      },
+    );
+
+    // Persist full execution trace to File Session (Summary)
+    try {
+      await this.sessionStore.appendMessage(sessionId, {
+        role: "system",
+        content: `### Team Execution Log\n\n${teamResult}`,
+      });
+    } catch (e) {
+      logger.error("Failed to persist execution log to file session", e);
+    }
+
+    // Persist agent execution results to memory
     try {
       await addMemory(
-        `Executed plan: ${plan.goal}. Results: ${JSON.stringify(results)}`,
+        `Executed plan for goal: ${refinedIntent}. Results: ${teamResult}`,
         "user",
         "system",
         ["execution", deviceId],
+        sessionId,
       );
     } catch (e) {
       logger.error("Failed to persist execution results", e);
     }
 
-    // 5. Output Processing (Output Agent)
-    // Create Output Agent for the source device (default strategy: reply to sender)
     // Here we can use the original config (if it had stream=true, we could stream output back)
     // But currently InteractionManager expects a Promise<string> return.
     // So we must force stream=false here too unless we change InteractionManager signature.
     const outputAgent = this.agentFactory.createOutputAgent(deviceId);
+
+    // Inject history into Output Agent as well
+    if (history.length > 0) {
+      outputAgent.setHistory([
+        { role: "system", content: outputAgent.config.systemPrompt },
+        ...history,
+      ]);
+    }
 
     // If we support streaming, use the original config (which might have stream=true)
     // and pass the onStream callback.
@@ -113,7 +259,7 @@ export class Planner {
     // So we'll use a collector wrapper.
     outputAgent.config.modelConfig = modelConfig;
 
-    const executionSummary = JSON.stringify(results);
+    const executionSummary = teamResult;
     const outputPrompt = generateOutputPrompt(refinedIntent, executionSummary);
 
     let finalResponse = "";
@@ -125,14 +271,27 @@ export class Planner {
 
     logger.info(`Final response generated: ${finalResponse}`);
 
-    // Persist system response to DB
+    // Persist system response to Vector Memory
     try {
-      await addMemory(finalResponse, "user", "assistant", [
-        "interaction",
-        deviceId,
-      ]);
+      await addMemory(
+        finalResponse,
+        "user",
+        "assistant",
+        ["interaction", deviceId],
+        sessionId,
+      );
     } catch (e) {
-      logger.error("Failed to persist output message", e);
+      logger.error("Failed to persist output message to vector memory", e);
+    }
+
+    // Persist to File Session
+    try {
+      await this.sessionStore.appendMessage(sessionId, {
+        role: "assistant",
+        content: finalResponse,
+      });
+    } catch (e) {
+      logger.error("Failed to persist output message to file session", e);
     }
 
     return finalResponse;
@@ -145,7 +304,7 @@ export class Planner {
     logger.info(`Planning for goal: ${goal}`);
 
     // 1. Get available tools
-    const tools = await this.mcpHub.getAllTools();
+    const tools = await this.toolRegistry.getAllTools();
     const toolsDesc = tools
       .map((t) => `- ${t.name}: ${t.description}`)
       .join("\n");

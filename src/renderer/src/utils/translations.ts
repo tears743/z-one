@@ -43,6 +43,7 @@ export const translations = {
       requireEmbedding: "Error: At least one Embedding model must be enabled.",
       noMultimodalWarning:
         "Warning: No Multimodal model enabled. PC control features will be unavailable.",
+      deleteModelConfirm: "Are you sure you want to delete this model?",
     },
     sidebar: {
       expand: "Expand Sidebar",
@@ -50,6 +51,10 @@ export const translations = {
     },
     delete: "Delete",
     removeImage: "Remove Image",
+    inputPlaceholder: "Type a message...",
+    agentWorkspace: "Agent Workspace",
+    agentWorkspaceDesc: "Directory for agent file operations",
+    selectFolder: "Select Folder",
   },
   zh: {
     newChat: "新对话",
@@ -88,11 +93,15 @@ export const translations = {
     maxTokens: "最大 Token 数 (Max Tokens)",
     stream: "流式响应 (Stream)",
     enableThinking: "启用思考 (Reasoning)",
+    agentWorkspace: "Agent 工作区",
+    agentWorkspaceDesc: "Agent 文件操作目录",
+    selectFolder: "选择文件夹",
     errors: {
       selectLLMForChat: "请选择一个大语言模型或多模态模型用于对话。",
       requireLLM: "错误：必须启用至少一个大语言模型或多模态模型。",
       requireEmbedding: "错误：必须启用至少一个 Embedding 模型。",
       noMultimodalWarning: "警告：未启用多模态模型，无法操作 PC 功能。",
+      deleteModelConfirm: "确定要删除此模型吗？",
     },
     sidebar: {
       expand: "展开侧边栏",
@@ -100,6 +109,7 @@ export const translations = {
     },
     delete: "删除",
     removeImage: "移除图片",
+    inputPlaceholder: "输入消息...",
   },
 };
 

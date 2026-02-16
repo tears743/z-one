@@ -66,6 +66,13 @@ class InteractionClient {
     }
   }
 
+  public reconnect() {
+    if (this.status === "connected") return;
+    this.retryCount = 0;
+    this.updateStatus("connecting");
+    this.connect();
+  }
+
   private connect() {
     if (this.status === "connected") return;
     // this.status = 'connecting'; // Already set in init or retry
@@ -89,10 +96,18 @@ class InteractionClient {
       }
     };
 
-    this.ws.onclose = () => {
-      console.log("Interaction Layer disconnected");
+    this.ws.onclose = (event) => {
+      // 1000: Normal closure (e.g. server shutdown or page close)
+      // 1006: Abnormal closure (server died, network error)
+      console.log(`Interaction Layer disconnected (Code: ${event.code})`);
       this.updateStatus("disconnected");
 
+      // Only retry if it was an abnormal closure or if we are not manually disconnected?
+      // Actually, if we are in 'connected' state and get close, we should retry.
+      // But if we called disconnect(), we shouldn't.
+      // For simplicity, we retry on any close unless we are blocked or manually stopped.
+
+      // Prevent infinite loops if server is permanently down
       if (this.retryCount < this.MAX_RETRIES) {
         this.retryCount++;
         console.log(
@@ -101,9 +116,10 @@ class InteractionClient {
         setTimeout(() => {
           this.updateStatus("connecting");
           this.connect();
-        }, this.RETRY_INTERVAL);
+        }, this.RETRY_INTERVAL * this.retryCount); // Exponential backoff-ish
       } else {
         console.log("Max retries reached. Stopping reconnection.");
+        // We stay disconnected. User can manually reconnect via UI button.
       }
     };
 
@@ -111,6 +127,15 @@ class InteractionClient {
       console.error("Interaction Layer error", err);
       // Status update handled in onclose
     };
+  }
+
+  public disconnect() {
+    this.retryCount = this.MAX_RETRIES; // Prevent auto-reconnect
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.updateStatus("disconnected");
   }
 
   private sendRegister() {
@@ -154,6 +179,16 @@ class InteractionClient {
           this.messageCallback(message);
         }
         break;
+      case "session_response":
+        if (this.sessionCallback) {
+          this.sessionCallback(message.payload);
+        }
+        break;
+      case "session_history_response":
+        if (this.historyCallback) {
+          this.historyCallback(message.payload);
+        }
+        break;
       // Handle other messages
     }
   }
@@ -173,7 +208,7 @@ class InteractionClient {
     );
   }
 
-  public sendMessage(content: any, modelConfig?: any) {
+  public sendMessage(content: any, sessionId?: string, modelConfig?: any) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Interaction Layer not connected");
     }
@@ -181,6 +216,7 @@ class InteractionClient {
     const payload: any = {
       content: content,
       from: this.deviceId,
+      sessionId: sessionId, // Add session ID
     };
 
     if (modelConfig) {
@@ -194,6 +230,56 @@ class InteractionClient {
         timestamp: Date.now(),
       }),
     );
+  }
+
+  private sessionCallback: ((payload: any) => void) | null = null;
+  private historyCallback: ((payload: any) => void) | null = null;
+
+  public requestSession(requestId?: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      // If not connected, we can't request session from server.
+      // Fallback or Queue?
+      // For now, let's assume UI handles connection check.
+      console.warn("Cannot request session: Not connected");
+      return;
+    }
+
+    this.ws.send(
+      JSON.stringify({
+        type: "session_request",
+        payload: {
+          requestId: requestId || crypto.randomUUID(),
+          deviceId: this.deviceId,
+        },
+        timestamp: Date.now(),
+      }),
+    );
+  }
+
+  public requestSessionHistory(sessionId: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("Cannot request history: Not connected");
+      return;
+    }
+
+    this.ws.send(
+      JSON.stringify({
+        type: "session_history_request",
+        payload: {
+          sessionId,
+          deviceId: this.deviceId,
+        },
+        timestamp: Date.now(),
+      }),
+    );
+  }
+
+  public onSessionResponse(callback: (payload: any) => void) {
+    this.sessionCallback = callback;
+  }
+
+  public onSessionHistoryResponse(callback: (payload: any) => void) {
+    this.historyCallback = callback;
   }
 
   public onMessage(callback: (msg: any) => void) {

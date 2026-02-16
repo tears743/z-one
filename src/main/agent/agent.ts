@@ -1,21 +1,26 @@
 import { randomUUID } from "crypto";
 import { AgentConfig, AgentState, AgentMessage } from "./types";
 import { LLMService, ChatMessage } from "../model/llm-service";
-import { McpHub } from "../control/mcp-hub";
+import { ToolRegistry } from "../execution/tool-registry";
 import { logger } from "../logger";
 import { estimateMessageTokens } from "../model/token-counter";
+import { summarizeSession } from "../memory/manager";
 
 export class Agent {
   public config: AgentConfig;
   public state: AgentState;
   private llmService: LLMService;
-  private mcpHub: McpHub;
+  private toolRegistry: ToolRegistry;
   private history: AgentMessage[] = [];
 
-  constructor(config: AgentConfig, llmService: LLMService, mcpHub: McpHub) {
+  constructor(
+    config: AgentConfig,
+    llmService: LLMService,
+    toolRegistry: ToolRegistry,
+  ) {
     this.config = config;
     this.llmService = llmService;
-    this.mcpHub = mcpHub;
+    this.toolRegistry = toolRegistry;
     this.state = {
       id: config.id,
       status: "idle",
@@ -37,6 +42,7 @@ export class Agent {
           | { type: "image_url"; image_url: { url: string } }
         >,
     onChunk?: (chunk: string) => void,
+    onStep?: (step: string) => void,
   ): Promise<string> {
     this.state.status = "thinking";
     this.history.push({ role: "user", content: input });
@@ -44,37 +50,224 @@ export class Agent {
     // Check and compress history if needed
     await this.compressHistoryIfNeeded();
 
-    try {
-      // 1. Prepare messages for LLM
-      const messages: ChatMessage[] = this.history.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+    let steps = 0;
+    const MAX_STEPS = 10;
+    let finalAnswer = "";
 
-      // 2. Call LLM
-      // TODO: Add tool definitions to LLM call (Function Calling)
-      // For now, we'll use a simple ReAct loop simulation or direct prompting
+    // Prepare Tools
+    const tools = await this.getNativeTools();
 
-      const response = await this.llmService.generateCompletion(
-        messages,
-        this.config.modelConfig,
-        false, // jsonMode
-        onChunk, // Pass the stream callback
-      );
+    while (steps < MAX_STEPS) {
+      steps++;
 
-      if (!response) {
-        throw new Error("Empty response from LLM");
+      try {
+        // 1. Prepare messages for LLM
+        const messages: ChatMessage[] = this.history.map((m) => ({
+          role: m.role,
+          content: m.content as any, // Cast for compatibility with ChatMessage
+          name: m.name,
+          tool_calls: m.tool_calls,
+          tool_call_id: m.tool_call_id,
+        }));
+
+        // 2. Call LLM
+        let fullResponse = "";
+        const response: any = await this.llmService.generateCompletion(
+          messages,
+          this.config.modelConfig,
+          false, // jsonMode
+          (chunk) => {
+            fullResponse += chunk;
+            if (onChunk) onChunk(chunk);
+          },
+          tools,
+        );
+
+        if (!response) {
+          throw new Error("Empty response from LLM");
+        }
+
+        // Handle Tool Calls (Object response)
+        if (typeof response === "object" && response.tool_calls) {
+          const toolCalls = response.tool_calls;
+          const assistantMsg: AgentMessage = {
+            role: "assistant",
+            content: response.content || null,
+            tool_calls: toolCalls,
+          };
+          this.history.push(assistantMsg);
+
+          // Log Thought (if content exists)
+          if (response.content) {
+            if (onStep) onStep(`**Thought**: ${response.content}`);
+          }
+
+          this.state.status = "acting";
+
+          // Execute Tools
+          for (const toolCall of toolCalls) {
+            const functionName = toolCall.function.name;
+            const argsString = toolCall.function.arguments;
+            const toolCallId = toolCall.id;
+
+            if (onStep)
+              onStep(
+                `**Action**: Calling tool \`${functionName}\` with args: \`${argsString}\``,
+              );
+            if (onChunk) onChunk(`\n*Executing: ${functionName}*\n`);
+
+            let resultStr = "";
+            try {
+              const args = JSON.parse(argsString);
+
+              // Verify permission
+              if (!this.config.tools.includes(functionName)) {
+                // Strict check? Or allow if LLM hallucinates built-in names?
+                // Let's rely on ToolRegistry to handle unknown tools or implement check here
+              }
+
+              const result = await this.toolRegistry.callTool(
+                functionName,
+                args,
+              );
+              resultStr =
+                typeof result === "string" ? result : JSON.stringify(result);
+            } catch (e: any) {
+              resultStr = `Error: ${e.message}`;
+            }
+
+            if (onStep)
+              onStep(`**Observation**: ${resultStr.substring(0, 500)}...`);
+            if (onChunk)
+              onChunk(`\n*Result: ${resultStr.substring(0, 100)}...*\n`);
+
+            // Append Tool Result
+            this.history.push({
+              role: "tool",
+              tool_call_id: toolCallId,
+              name: functionName,
+              content: resultStr,
+            });
+          }
+          this.state.status = "thinking";
+          continue; // Loop back to LLM with tool results
+        }
+
+        // Handle Text Response (Legacy or Final Answer)
+        const content =
+          typeof response === "string" ? response : response.content;
+
+        if (!content) {
+          // Should have been handled by tool_calls check, but if we get here with empty content:
+          throw new Error("Received empty content and no tool calls");
+        }
+
+        this.history.push({ role: "assistant", content: content });
+
+        // Log Thought/Content
+        // Only log as thought if we are not done yet (heuristic)
+        // But for text response, we might just log it.
+        // If it contains legacy JSON, we log it as thought.
+
+        // 3. Parse JSON Action (Legacy Fallback)
+        let parsed: any = null;
+        try {
+          // Try to extract JSON from code block first
+          const match = content.match(/```json\n?([\s\S]*?)\n?```/);
+          if (match) {
+            parsed = JSON.parse(match[1]);
+          } else {
+            // Fallback: Try to find valid JSON object in text
+            const start = content.indexOf("{");
+            const end = content.lastIndexOf("}");
+            if (start !== -1 && end !== -1) {
+              parsed = JSON.parse(content.substring(start, end + 1));
+            }
+          }
+        } catch (e) {
+          // Ignore parse errors, it might just be chat
+        }
+
+        // 4. Execute Action (Legacy)
+        if (parsed && parsed.action) {
+          if (onStep) onStep(`**Thought**: ${content}`);
+
+          // Check for final answer
+          if (parsed.action === "final_answer") {
+            finalAnswer = parsed.args?.text || content;
+            this.state.status = "idle";
+            if (onStep) onStep(`**Final Answer**: ${finalAnswer}`);
+            return finalAnswer;
+          }
+
+          this.state.status = "acting";
+          if (onChunk) onChunk(`\n*Executing: ${parsed.action}*\n`);
+          if (onStep)
+            onStep(
+              `**Action**: ${parsed.action} ${JSON.stringify(parsed.args)}`,
+            );
+
+          try {
+            const result = await this.toolRegistry.callTool(
+              parsed.action,
+              parsed.args || {},
+            );
+            const resultStr =
+              typeof result === "string" ? result : JSON.stringify(result);
+
+            // Add observation to history
+            this.history.push({
+              role: "user",
+              content: `[Tool Result for ${parsed.action}]:\n${resultStr}`,
+            });
+
+            if (onChunk)
+              onChunk(`\n*Result: ${resultStr.substring(0, 100)}...*\n`);
+            if (onStep)
+              onStep(`**Observation**: ${resultStr.substring(0, 500)}...`);
+          } catch (err: any) {
+            this.history.push({
+              role: "user",
+              content: `[Tool Error]: ${err.message}`,
+            });
+            if (onChunk) onChunk(`\n*Error: ${err.message}*\n`);
+            if (onStep) onStep(`**Error**: ${err.message}`);
+          }
+          this.state.status = "thinking";
+        } else {
+          // No structured action found.
+          finalAnswer = content;
+          this.state.status = "idle";
+          // If it didn't use tools, we assume it's the final answer
+          // But with native tools, we might have just completed a tool loop and got a text summary.
+          if (onStep) onStep(`**Final Answer**: ${finalAnswer}`);
+          return finalAnswer;
+        }
+      } catch (e: any) {
+        this.state.status = "failed";
+        logger.error(`Agent ${this.config.name} failed:`, e);
+        throw e;
       }
-
-      this.history.push({ role: "assistant", content: response });
-      this.state.status = "idle";
-
-      return response;
-    } catch (e: any) {
-      this.state.status = "failed";
-      logger.error(`Agent ${this.config.name} failed:`, e);
-      throw e;
     }
+
+    this.state.status = "idle";
+    return finalAnswer || "Agent reached max steps without final answer.";
+  }
+
+  private async getNativeTools(): Promise<any[]> {
+    const allTools = await this.toolRegistry.getAllTools();
+    const allowedTools = allTools.filter((t) =>
+      this.config.tools.includes(t.name),
+    );
+
+    return allowedTools.map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.inputSchema || { type: "object", properties: {} },
+      },
+    }));
   }
 
   public async executeTool(toolName: string, args: any): Promise<any> {
@@ -86,13 +279,46 @@ export class Agent {
 
     this.state.status = "acting";
     try {
-      const result = await this.mcpHub.callTool("unknown", toolName, args);
+      const result = await this.toolRegistry.callTool(toolName, args);
       this.state.status = "idle";
       return result;
     } catch (e) {
       this.state.status = "failed";
       throw e;
     }
+  }
+
+  public setHistory(messages: AgentMessage[]) {
+    this.history = messages;
+  }
+
+  public getHistory(): AgentMessage[] {
+    return this.history;
+  }
+
+  /**
+   * Returns the execution trace (thoughts and tool interactions) for the current session.
+   * Filters out system prompts and initial user input to focus on the agent's actions.
+   */
+  public getExecutionTrace(): string {
+    return this.history
+      .filter((m) => {
+        if (m.role === "assistant") return true;
+        if (m.role === "user") {
+          return typeof m.content === "string" && m.content.startsWith("[Tool");
+        }
+        return false;
+      })
+      .map((m) => {
+        const contentStr =
+          typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        if (m.role === "assistant") {
+          return `**Thought/Action**: ${contentStr}`;
+        } else {
+          return `**Observation**: ${contentStr}`;
+        }
+      })
+      .join("\n\n");
   }
 
   private async compressHistoryIfNeeded(): Promise<void> {
@@ -123,6 +349,22 @@ export class Agent {
 
     const messagesToSummarize = this.history.slice(1, -lastMessagesCount);
     if (messagesToSummarize.length === 0) return;
+
+    // Persist to Long-Term Memory (OpenClaw Style)
+    // We summarize the session so far and save it to DB
+    try {
+      // Convert to simple format for summarizer
+      const simpleMessages = messagesToSummarize.map((m) => ({
+        role: m.role,
+        content:
+          typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      }));
+      // Use a default session ID or pass it if available (Config needs update to support sessionId)
+      // For now, we'll use "agent_history_compression" as a pseudo-session if not provided
+      await summarizeSession(simpleMessages, this.config.id || "global");
+    } catch (e) {
+      logger.warn("Failed to persist summary to long-term memory", e);
+    }
 
     // Use LLM to summarize
     // We create a temporary "Summarizer" context
@@ -163,5 +405,26 @@ export class Agent {
       // Fallback: Just truncate middle messages if summarization fails
       // this.history = [systemPrompt, ...recentHistory];
     }
+  }
+
+  private async getCompletion(messages: AgentMessage[]): Promise<string> {
+    const config = this.config.modelConfig;
+
+    // Convert AgentMessage to ChatMessage
+    const chatMessages: ChatMessage[] = messages.map((m) => ({
+      role: m.role,
+      content: m.content as any, // Cast to any to handle null/undefined or type mismatches
+    }));
+
+    const response = await this.llmService.generateCompletion(
+      chatMessages,
+      config,
+      false, // Default to text mode for general agent conversation, unless specific tool requires JSON
+    );
+
+    if (!response) {
+      throw new Error("Empty response from LLM");
+    }
+    return response;
   }
 }

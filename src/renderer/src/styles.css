@@ -11,7 +11,7 @@ html, body, #root {
 }
 
 :root {
-  /* Colors */
+  /* Default Dark Theme Colors */
   --bg-primary: #1e1e1e;
   --bg-secondary: #252526;
   --bg-tertiary: #2d2d2d;
@@ -30,7 +30,7 @@ html, body, #root {
   --border-color: #333333;
   --border-light: #444444;
 
-  --accent-color: #0e639c; /* Default, will be overridden by inline style if user customized */
+  --accent-color: #0e639c; 
   
   /* Spacing */
   --spacing-xs: 4px;
@@ -47,6 +47,33 @@ html, body, #root {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.3);
+}
+
+/* Light Theme Overrides */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #e5e5e5;
+  --bg-hover: #e0e0e0; /* Slightly lighter than d0d0d0 for better subtle hover */
+  --bg-input: #ffffff;
+  --bg-button: #0078d4;
+  --bg-button-hover: #106ebe;
+  --bg-button-secondary: #e0e0e0;
+  --bg-button-secondary-hover: #d0d0d0;
+
+  --text-primary: #333333;
+  --text-secondary: #555555;
+  --text-muted: #777777;
+  --text-inverse: #ffffff;
+
+  --border-color: #e0e0e0;
+  --border-light: #cccccc;
+
+  --accent-color: #0078d4;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.15);
 }
 
 /* Layout Classes */
@@ -82,12 +109,13 @@ html, body, #root {
 .sidebar-header {
   padding: var(--spacing-sm);
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0; /* Prevent shrinking */
 }
 
 .new-chat-btn {
   width: 100%;
   padding: 10px;
-  background-color: var(--bg-button);
+  background-color: var(--accent-color); /* Use accent color */
   color: var(--text-inverse);
   border: none;
   border-radius: var(--radius-sm);
@@ -97,7 +125,7 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, filter 0.2s;
 }
 
 .new-chat-btn:hover {
@@ -108,6 +136,8 @@ html, body, #root {
   flex: 1;
   overflow-y: auto;
   padding: var(--spacing-xs);
+  margin-top: 8px; /* Increased spacing to prevent occlusion */
+  border-top: 1px solid transparent; /* Force separation */
 }
 
 .session-item {
@@ -127,11 +157,11 @@ html, body, #root {
 }
 
 .session-item:hover {
-  background-color: #2a2d2e;
+  background-color: var(--bg-hover);
 }
 
 .session-item.active {
-  background-color: var(--bg-hover);
+  background-color: var(--accent-color);
   color: var(--text-inverse);
 }
 
@@ -151,7 +181,8 @@ html, body, #root {
 
 .session-time {
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: inherit; /* Inherit color (useful for active state) */
+  opacity: 0.8;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -159,24 +190,34 @@ html, body, #root {
 .session-delete-btn {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: inherit; /* Inherit color */
+  opacity: 0.7;
   cursor: pointer;
   padding: 6px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s, background-color 0.2s, color 0.2s;
+  opacity: 0; /* Hidden by default */
+  transition: opacity 0.15s, background-color 0.2s;
 }
 
 .session-item:hover .session-delete-btn {
-  opacity: 1;
+  opacity: 0.7;
+}
+
+.session-item.active .session-delete-btn {
+    opacity: 1; /* Always show delete on active, or on hover? Keep hover behavior but ensure visibility */
+}
+
+.session-item.active:hover .session-delete-btn {
+    opacity: 1;
+    color: var(--text-inverse);
 }
 
 .session-delete-btn:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-  color: var(--text-inverse);
+  background-color: rgba(255, 255, 255, 0.2);
+  opacity: 1 !important;
 }
 
 /* Header */
@@ -219,7 +260,7 @@ html, body, #root {
 }
 
 .icon-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--accent-color);
   color: var(--text-inverse);
 }
 
@@ -487,15 +528,16 @@ html, body, #root {
 }
 
 .btn-primary {
-  background-color: var(--bg-button);
+  background-color: var(--accent-color);
 }
 
 .btn-primary:hover {
-  background-color: var(--bg-button-hover);
+  filter: brightness(1.1); /* Use filter instead of fixed color to adapt to accent */
 }
 
 .btn-secondary {
   background-color: var(--bg-button-secondary);
+  color: var(--text-primary);
 }
 
 .btn-secondary:hover {
@@ -577,7 +619,7 @@ html, body, #root {
 
 .modal-sidebar {
   width: 220px;
-  background-color: #222223;
+  background-color: var(--bg-tertiary);
   border-right: 1px solid var(--border-color);
   padding: 12px;
   display: flex;
@@ -595,12 +637,12 @@ html, body, #root {
 }
 
 .modal-sidebar-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .modal-sidebar-item.active {
-  background-color: var(--bg-hover);
+  background-color: var(--accent-color);
   color: var(--text-inverse);
   font-weight: 500;
 }
@@ -638,18 +680,125 @@ html, body, #root {
 
 .form-input, .form-select {
   width: 100%;
-  padding: 10px 14px;
+  height: 40px; /* Enforce consistent height */
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-light);
   background-color: var(--bg-input);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 1rem;
+  font-size: 0.9rem;
   transition: border-color 0.2s;
   margin-top: 8px;
+  box-sizing: border-box; /* Ensure padding doesn't affect width */
 }
 
 .form-input:focus, .form-select:focus {
   outline: none;
   border-color: var(--accent-color);
+}
+
+/* Markdown Styles */
+.markdown-body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.markdown-body h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border-color); }
+.markdown-body h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border-color); }
+.markdown-body h3 { font-size: 1.25em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body h5 { font-size: 0.875em; }
+.markdown-body h6 { font-size: 0.85em; color: var(--text-muted); }
+
+.markdown-body p {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.markdown-body code {
+  padding: 0.2em 0.4em;
+  margin: 0;
+  font-size: 85%;
+  background-color: var(--bg-tertiary);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+}
+
+.markdown-body pre {
+  padding: 16px;
+  overflow: auto;
+  font-size: 85%;
+  line-height: 1.45;
+  background-color: var(--bg-tertiary);
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.markdown-body pre code {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  line-height: inherit;
+  word-wrap: normal;
+  background-color: transparent;
+  border: 0;
+}
+
+.markdown-body ul, .markdown-body ol {
+  padding-left: 2em;
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.markdown-body li {
+  margin-top: 0.25em;
+}
+
+.markdown-body blockquote {
+  padding: 0 1em;
+  color: var(--text-muted);
+  border-left: 0.25em solid var(--border-color);
+  margin: 0 0 16px 0;
+}
+
+.markdown-body table {
+  display: block;
+  width: 100%;
+  overflow: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  padding: 6px 13px;
+  border: 1px solid var(--border-color);
+}
+
+.markdown-body table tr {
+  background-color: var(--bg-primary);
+  border-top: 1px solid var(--border-color);
+}
+
+.markdown-body table tr:nth-child(2n) {
+  background-color: var(--bg-secondary);
+}
+
+.markdown-body img {
+  max-width: 100%;
+  box-sizing: content-box;
+  background-color: var(--bg-primary);
 }

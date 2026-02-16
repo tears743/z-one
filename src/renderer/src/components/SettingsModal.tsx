@@ -6,13 +6,14 @@ import {
   ModelProvider,
   DEFAULT_MODELS,
 } from "../types/settings";
-import { t } from "../utils/translations";
+import { t, translations } from "../utils/translations";
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: AppSettings;
   onSave: (newSettings: AppSettings) => void;
+  trans: typeof translations.en;
 }
 
 const LOCKED_PROVIDER: ModelProvider = "openai";
@@ -42,6 +43,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [isOpen, settings]);
 
   if (!isOpen) return null;
+
+  const handleSelectFolder = async () => {
+    if (window.electron && window.electron.ipcRenderer) {
+      const folderPath = await window.electron.ipcRenderer.invoke(
+        "dialog:openDirectory",
+      );
+      if (folderPath) {
+        updateGeneral("agentWorkspace", folderPath);
+      }
+    }
+  };
 
   const handleSave = () => {
     // Validation
@@ -83,7 +95,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onClose();
   };
 
-  const updateGeneral = (key: keyof AppSettings["general"], value: any) => {
+  const updateGeneral = <K extends keyof AppSettings["general"]>(
+    key: K,
+    value: AppSettings["general"][K],
+  ) => {
     setLocalSettings((prev) => ({
       ...prev,
       general: { ...prev.general, [key]: value },
@@ -117,6 +132,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const deleteModel = (id: string) => {
+    if (!window.confirm(trans.errors.deleteModelConfirm)) {
+      return;
+    }
     setLocalSettings((prev) => ({
       ...prev,
       models: prev.models.filter((m) => m.id !== id),
@@ -125,7 +143,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="modal-overlay">
+    <div
+      className="modal-overlay"
+      style={{ "--accent-color": localSettings.general.primaryColor } as any}
+    >
       <div className="modal-content">
         {/* Header */}
         <div className="modal-header">
@@ -138,7 +159,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             {trans.settings}
           </h2>
-          <button onClick={onClose} className="icon-btn">
+          <button
+            onClick={onClose}
+            className="icon-btn"
+            style={{ color: "var(--text-primary)" }}
+          >
             <X size={20} />
           </button>
         </div>
@@ -235,36 +260,140 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </Section>
                 <Section title={trans.appearance}>
-                  <div style={{ display: "flex", gap: "20px" }}>
-                    <label className="form-label">
-                      {trans.theme}:
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: "20px",
+                    }}
+                  >
+                    <div className="form-group">
+                      <label className="form-label">{trans.theme}</label>
                       <select
                         value={localSettings.general.theme}
-                        onChange={(e) => updateGeneral("theme", e.target.value)}
+                        onChange={(e) =>
+                          updateGeneral(
+                            "theme",
+                            e.target.value as "light" | "dark" | "system",
+                          )
+                        }
                         className="form-select"
+                        style={{ width: "100%" }}
                       >
                         <option value="light">{trans.light}</option>
                         <option value="dark">{trans.dark}</option>
                         <option value="system">{trans.system}</option>
                       </select>
-                    </label>
-                    <label className="form-label">
-                      {trans.primaryColor}:
-                      <input
-                        type="color"
-                        value={localSettings.general.primaryColor}
-                        onChange={(e) =>
-                          updateGeneral("primaryColor", e.target.value)
-                        }
-                        style={{ marginLeft: "10px", cursor: "pointer" }}
-                      />
-                    </label>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">{trans.primaryColor}</label>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "36px",
+                            height: "36px",
+                            borderRadius: "50%",
+                            backgroundColor: localSettings.general.primaryColor,
+                            border: "2px solid var(--border-color)",
+                            cursor: "pointer",
+                            position: "relative",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <input
+                            type="color"
+                            value={localSettings.general.primaryColor}
+                            onChange={(e) =>
+                              updateGeneral("primaryColor", e.target.value)
+                            }
+                            style={{
+                              position: "absolute",
+                              top: "-50%",
+                              left: "-50%",
+                              width: "200%",
+                              height: "200%",
+                              cursor: "pointer",
+                              opacity: 0,
+                            }}
+                          />
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "0.9rem",
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          {localSettings.general.primaryColor}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </Section>
+                <Section title={trans.agentWorkspace}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--text-muted)",
+                        marginBottom: "5px",
+                      }}
+                    >
+                      {trans.agentWorkspaceDesc}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          backgroundColor: "var(--bg-input)",
+                          borderRadius: "var(--radius-sm)",
+                          border: "1px solid var(--border-color)",
+                          color: "var(--text-primary)",
+                          fontSize: "0.9rem",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {localSettings.general.agentWorkspace &&
+                        localSettings.general.agentWorkspace.length > 0
+                          ? localSettings.general.agentWorkspace
+                          : "Not set"}
+                      </div>
+                      <button
+                        onClick={handleSelectFolder}
+                        className="btn btn-secondary"
+                        style={{ whiteSpace: "nowrap" }}
+                      >
+                        {trans.selectFolder}
+                      </button>
+                    </div>
                   </div>
                 </Section>
                 <Section title={trans.language}>
                   <select
                     value={localSettings.general.language}
-                    onChange={(e) => updateGeneral("language", e.target.value)}
+                    onChange={(e) =>
+                      updateGeneral("language", e.target.value as "en" | "zh")
+                    }
                     className="form-select"
                   >
                     <option value="en">{trans.english}</option>
@@ -440,7 +569,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               className="form-input"
                             />
                           </Field>
-                          <Field label={trans.baseUrl}>
+                          <Field label={trans.baseUrl} fullWidth>
                             <input
                               value={model.baseUrl || ""}
                               onChange={(e) =>
@@ -467,41 +596,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </Field>
 
                           {/* Advanced Parameters */}
-                          <Field label={trans.temperature}>
-                            <input
-                              type="number"
-                              min={0}
-                              max={2}
-                              step={0.1}
-                              value={model.temperature ?? ""}
-                              onChange={(e) =>
-                                updateModel(model.id, {
-                                  temperature: e.target.value
-                                    ? parseFloat(e.target.value)
-                                    : undefined,
-                                })
-                              }
-                              placeholder="0.7"
-                              className="form-input"
-                            />
-                          </Field>
-                          <Field label={trans.maxTokens}>
-                            <input
-                              type="number"
-                              min={1}
-                              value={model.maxTokens ?? ""}
-                              onChange={(e) =>
-                                updateModel(model.id, {
-                                  maxTokens: e.target.value
-                                    ? parseInt(e.target.value)
-                                    : undefined,
-                                })
-                              }
-                              placeholder="e.g. 4096"
-                              className="form-input"
-                            />
-                          </Field>
-                          <Field label="Max Input Tokens (History Compression)">
+                          <div
+                            style={{
+                              gridColumn: "1 / -1",
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: "10px",
+                            }}
+                          >
+                            <Field label={trans.temperature}>
+                              <input
+                                type="number"
+                                min={0}
+                                max={2}
+                                step={0.1}
+                                value={model.temperature ?? ""}
+                                onChange={(e) =>
+                                  updateModel(model.id, {
+                                    temperature: e.target.value
+                                      ? parseFloat(e.target.value)
+                                      : undefined,
+                                  })
+                                }
+                                placeholder="0.7"
+                                className="form-input"
+                              />
+                            </Field>
+                            <Field label={trans.maxTokens}>
+                              <input
+                                type="number"
+                                min={1}
+                                value={model.maxTokens ?? ""}
+                                onChange={(e) =>
+                                  updateModel(model.id, {
+                                    maxTokens: e.target.value
+                                      ? parseInt(e.target.value)
+                                      : undefined,
+                                  })
+                                }
+                                placeholder="e.g. 4096"
+                                className="form-input"
+                              />
+                            </Field>
+                          </div>
+
+                          <Field
+                            label="Max Input Tokens (History Compression)"
+                            fullWidth
+                          >
                             <input
                               type="number"
                               min={1}

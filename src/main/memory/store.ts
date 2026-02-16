@@ -235,6 +235,17 @@ export function searchKeyword(
 ): { id: string }[] {
   if (!db) throw new Error("DB not initialized");
 
+  // Sanitize query for FTS5
+  // Replace FTS5 reserved characters with spaces to prevent syntax errors
+  // Reserved: " * + - ^ : ( ) { } [ ] AND OR NOT
+  const safeQuery = query.replace(/["*+\-^:(){}\[\]]/g, " ").trim();
+  
+  // If query becomes empty or just boolean operators, handle gracefully
+  if (!safeQuery) return [];
+
+  // Simple tokenization: treat as AND query by default if multiple words?
+  // FTS5 default is AND. "foo bar" matches documents with foo AND bar.
+  
   const stmt = db.prepare(`
     SELECT t.id
     FROM fts_fragments t
@@ -245,7 +256,7 @@ export function searchKeyword(
   `);
 
   try {
-    const results = stmt.all(query, sessionId, limit) as { id: string }[];
+    const results = stmt.all(safeQuery, sessionId, limit) as { id: string }[];
     return results;
   } catch (e) {
     // FTS syntax error (e.g. empty query or special chars)

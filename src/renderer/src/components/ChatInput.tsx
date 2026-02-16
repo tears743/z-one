@@ -10,6 +10,8 @@ interface ChatInputProps {
   onSend: (text: string, images: string[]) => void;
   loading: boolean;
   language: "en" | "zh";
+  disabled?: boolean;
+  placeholder?: string;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -19,6 +21,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
   loading,
   language,
+  disabled,
+  placeholder,
 }) => {
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]); // Base64 strings
@@ -166,18 +170,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={trans.messagePlaceholder.replace(
-            "{model}",
-            activeModel?.name || "Model",
-          )}
+          placeholder={
+            placeholder ||
+            trans.messagePlaceholder.replace(
+              "{model}",
+              activeModel?.name || "Model",
+            )
+          }
           rows={1}
           className="chat-textarea"
-          disabled={loading}
+          disabled={loading || disabled}
         />
         <div className="input-actions" style={{ justifyContent: "flex-end" }}>
           <button
             onClick={handleSend}
-            disabled={loading || (!text.trim() && images.length === 0)}
+            disabled={
+              loading || disabled || (!text.trim() && images.length === 0)
+            }
             className="send-btn"
           >
             <Send size={16} />

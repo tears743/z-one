@@ -3,6 +3,8 @@ import { generateEmbedding, generateCompletion } from "../model/llm-service";
 import * as store from "./store";
 import { MemoryFragment, MemorySearchResult } from "./types";
 import { AppSettings, ModelConfig } from "../../renderer/src/types/settings";
+import * as fs from "fs/promises";
+import * as path from "path";
 
 // Helper to get settings
 let getSettings: () => AppSettings | undefined;
@@ -39,6 +41,20 @@ function resolveChatModel(settings: AppSettings): ModelConfig {
   throw new Error("No active chat model found");
 }
 
+async function appendToFile(
+  filePath: string,
+  content: string,
+  role: string,
+  layer: string,
+) {
+  try {
+    const entry = `\n---\n**Date**: ${new Date().toISOString()}\n**Role**: ${role}\n**Layer**: ${layer}\n\n${content}\n`;
+    await fs.appendFile(filePath, entry, "utf-8");
+  } catch (e) {
+    console.error(`Failed to append to file ${filePath}:`, e);
+  }
+}
+
 export async function addMemory(
   content: string,
   layer: "execution" | "control" | "decision" | "user",
@@ -49,14 +65,20 @@ export async function addMemory(
   const settings = getSettings ? getSettings() : undefined;
   if (!settings) throw new Error("Settings not available");
 
-  const config = resolveEmbeddingModel(settings);
+  const id = randomUUID();
 
+  // 1. File Storage (Log)
+  // Note: Chat history logging is handled by FileSessionStore (called via Planner/Interaction Layer).
+  // This function primarily handles Vector/RAG storage.
+  // Ideally, this should also link to the file content, but for now we rely on the session ID.
+  // The 'id' here is the Fragment ID for the vector index, not the Session ID.
+
+  // 2. Vector Storage (For RAG)
+  const config = resolveEmbeddingModel(settings);
   const embedding = await generateEmbedding(content, config);
 
   // Ensure table exists with correct dimensions
   store.ensureVectorTable(embedding.length);
-
-  const id = randomUUID();
 
   const fragment: MemoryFragment = {
     id,
@@ -80,25 +102,19 @@ export async function searchMemory(
   const settings = getSettings ? getSettings() : undefined;
   if (!settings) throw new Error("Settings not available");
 
-  const config = resolveEmbeddingModel(settings);
   const limit = options.limit || 10;
   const sessionId = options.sessionId || "global";
 
   // 1. Vector Search
   let vectorResults: { id: string; score: number }[] = [];
+
   try {
+    const config = resolveEmbeddingModel(settings);
     const embedding = await generateEmbedding(query, config);
-    // We assume table exists or we catch error
-    // Ideally we check dimensions match current model?
-    // If table has different dims, search will fail or be garbage.
-    // For now, we assume user hasn't switched embedding models without re-indexing.
-    // (Re-indexing is a separate task)
     vectorResults = store.searchVector(embedding, limit * 2, sessionId);
-  } catch (e) {
-    console.warn(
-      "[MemoryManager] Vector search failed (table might be missing or dimensions mismatch):",
-      e,
-    );
+  } catch (e: any) {
+    // Log simpler error message to avoid spamming stack traces for config issues
+    console.warn(`[MemoryManager] Vector search skipped: ${e.message}`);
   }
 
   // 2. Keyword Search (FTS)
@@ -154,8 +170,11 @@ export async function summarizeSession(
   const transcript = messages
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
+
   const prompt = `
-You are an expert memory assistant. Summarize the following session transcript into key insights, decisions, and execution details.
+You are a helpful assistant that summarizes conversation history.
+Also provide a short 3-5 word title for this session.
+
 Structure the summary into three layers:
 1. **Decision Layer**: Strategic choices, goals, and high-level directives.
 2. **Control Layer**: Plans, rules, and constraints established.
@@ -166,6 +185,7 @@ ${transcript}
 
 Output JSON format:
 {
+  "title": "...",
   "decision": "...",
   "control": "...",
   "execution": "..."
@@ -181,36 +201,34 @@ Output JSON format:
     );
     if (!content) return;
 
-    const summary = JSON.parse(content);
+    let summary;
+    try {
+      summary = JSON.parse(content);
+    } catch (e) {
+      console.error("Failed to parse summary JSON", e);
+      return;
+    }
 
-    // 3. Store in separate layers
-    if (summary.decision)
-      await addMemory(
-        summary.decision,
-        "decision",
-        "session_summary",
-        [],
+    // 3. Store in separate layers (Vector DB)
+    if (summary.decision) {
+      await addMemory(summary.decision, "decision", "session_summary", [
+        "summary",
         sessionId,
-      );
-    if (summary.control)
-      await addMemory(
-        summary.control,
-        "control",
-        "session_summary",
-        [],
+      ]);
+    }
+    if (summary.control) {
+      await addMemory(summary.control, "control", "session_summary", [
+        "summary",
         sessionId,
-      );
-    if (summary.execution)
-      await addMemory(
-        summary.execution,
-        "execution",
-        "session_summary",
-        [],
+      ]);
+    }
+    if (summary.execution) {
+      await addMemory(summary.execution, "execution", "session_summary", [
+        "summary",
         sessionId,
-      );
-
-    console.log("[MemoryManager] Session summarized and stored.");
+      ]);
+    }
   } catch (e) {
-    console.error("[MemoryManager] Failed to summarize session:", e);
+    console.error("Summarization failed:", e);
   }
 }

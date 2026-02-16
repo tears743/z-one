@@ -106,18 +106,7 @@ export class InteractionManager {
       this.wss.on("connection", (ws: WebSocket, req) => {
         const ip = req.socket.remoteAddress || "unknown";
         logger.info(`New connection from ${ip}`);
-
-        // Temporary connection info until registered
-        const tempId = randomUUID();
-        this.connections.set(ws, {
-          id: tempId,
-          deviceId: "unknown",
-          name: "Unregistered",
-          type: "external",
-          status: "pending",
-          ip: ip,
-          connectedAt: Date.now(),
-        });
+        (ws as any).remoteIp = ip;
 
         ws.on("message", (data: string) => {
           try {
@@ -182,6 +171,12 @@ export class InteractionManager {
       case "message":
         this.handleTextMessage(ws, message);
         break;
+      case "session_request":
+        this.handleSessionRequest(ws, message.payload);
+        break;
+      case "session_history_request":
+        this.handleSessionHistoryRequest(ws, message.payload);
+        break;
       case "heartbeat":
         // Keep alive
         break;
@@ -200,11 +195,22 @@ export class InteractionManager {
       }
     }
 
-    const info = this.connections.get(ws);
-    if (!info) return;
-
-    info.deviceId = payload.deviceId;
-    info.name = payload.name;
+    let info = this.connections.get(ws);
+    if (!info) {
+      info = {
+        id: randomUUID(),
+        deviceId: payload.deviceId,
+        name: payload.name,
+        type: "external",
+        status: "pending",
+        ip: (ws as any).remoteIp || "unknown",
+        connectedAt: Date.now(),
+      };
+      this.connections.set(ws, info);
+    } else {
+      info.deviceId = payload.deviceId;
+      info.name = payload.name;
+    }
 
     // Check internal token
     if (payload.type === "internal" && payload.token === this.internalToken) {
@@ -383,6 +389,77 @@ export class InteractionManager {
     }
   }
 
+  private async handleSessionRequest(ws: WebSocket, payload: any) {
+    const info = this.connections.get(ws);
+    if (!info || info.status !== "active") return;
+
+    // Generate new Session ID
+    const newSessionId = randomUUID();
+
+    // Log creation
+    logger.info(
+      `[SessionManager] Creating new session ${newSessionId} for device ${info.deviceId}`,
+    );
+
+    // Create a new file for the session in FileSessionStore
+    if (this.planner) {
+      // Initialize the session file with a placeholder asynchronously
+      // We use a pseudo-message to trigger file creation
+      // This ensures the file exists even before the first message is sent
+      // No await here to avoid blocking response
+      this.planner.sessionStore
+        .appendMessage(newSessionId, {
+          role: "system",
+          content: `Session Created for device: ${info.deviceId}`,
+        })
+        .catch((e) => {
+          logger.error(
+            `Failed to initialize session file for ${newSessionId}`,
+            e,
+          );
+        });
+    }
+
+    // Respond to device
+    this.sendTo(ws, {
+      type: "session_response",
+      payload: {
+        sessionId: newSessionId,
+        requestId: payload.requestId, // Correlation ID if needed
+        status: "created",
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  private async handleSessionHistoryRequest(ws: WebSocket, payload: any) {
+    const info = this.connections.get(ws);
+    if (!info || info.status !== "active") return;
+
+    const sessionId = payload.sessionId;
+    if (!sessionId) return;
+
+    logger.info(`[SessionManager] Loading history for session ${sessionId}`);
+
+    let messages: any[] = [];
+    if (this.planner) {
+      try {
+        messages = await this.planner.sessionStore.loadSession(sessionId);
+      } catch (e) {
+        logger.error(`Failed to load session history for ${sessionId}`, e);
+      }
+    }
+
+    this.sendTo(ws, {
+      type: "session_history_response",
+      payload: {
+        sessionId,
+        messages,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
   private async handleTextMessage(ws: WebSocket, message: InteractionMessage) {
     const info = this.connections.get(ws);
     if (!info || info.status !== "active") return;
@@ -390,7 +467,6 @@ export class InteractionManager {
     logger.debug(
       `[InteractionManager] Processing text message from ${info.deviceId}`,
       {
-        messageId: message.id,
         timestamp: message.timestamp,
       },
     );
@@ -403,6 +479,8 @@ export class InteractionManager {
           typeof payload.content === "string"
             ? payload.content
             : JSON.stringify(payload.content); // Only stringify content part
+
+        const sessionId = payload.sessionId; // Extract session ID
 
         // Hydrate model config strictly from DB
         const clientModelConfig = payload.modelConfig || {};
@@ -430,6 +508,11 @@ export class InteractionManager {
             modelConfig = { ...targetModel };
             // Optional: allow client to override non-sensitive params like temperature if needed?
             // For now, strict mode: only DB config.
+
+            // Ensure stream is true for interactive chat if undefined
+            if (modelConfig.stream === undefined) {
+              modelConfig.stream = true;
+            }
           } else {
             logger.warn("No valid model configuration found for request");
           }
@@ -442,19 +525,37 @@ export class InteractionManager {
           info.deviceId,
           content,
           modelConfig,
-          (chunk) => {
+          (chunk: any) => {
             // Streaming callback
-            this.sendTo(ws, {
-              type: "message",
-              payload: {
-                content: chunk,
-                from: "system",
-                to: info.deviceId,
-                isChunk: true, // Flag to indicate partial content
-              },
-              timestamp: Date.now(),
-            });
+            if (typeof chunk === "object" && chunk.stages) {
+              // It's a Swarm State update (TeamPlan snapshot)
+              this.sendTo(ws, {
+                type: "message",
+                payload: {
+                  from: "system",
+                  to: info.deviceId,
+                  isChunk: true,
+                  details: {
+                    swarmState: chunk,
+                  },
+                },
+                timestamp: Date.now(),
+              });
+            } else if (typeof chunk === "string") {
+              // Normal text chunk
+              this.sendTo(ws, {
+                type: "message",
+                payload: {
+                  content: chunk,
+                  from: "system",
+                  to: info.deviceId,
+                  isChunk: true, // Flag to indicate partial content
+                },
+                timestamp: Date.now(),
+              });
+            }
           },
+          sessionId, // Pass session ID
         );
 
         // Send the response back to the device via Interaction Layer (Output Channel)

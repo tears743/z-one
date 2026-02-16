@@ -30,6 +30,7 @@ export interface AppSettings {
     theme: "light" | "dark" | "system";
     primaryColor: string; // For skin/theme color
     language: "en" | "zh";
+    agentWorkspace?: string;
   };
   models: ModelConfig[];
   activeModelId: string; // ID of the currently selected ModelConfig (LLM/Multimodal)

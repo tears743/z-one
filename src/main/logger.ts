@@ -36,14 +36,14 @@ class Logger {
       // However, we can try to force log output encoding if needed, but usually not possible in JS directly.
       // Just log directly.
       console.log(logEntry.trim());
-      
+
       // Also write to file in dev for checking encoding there
       try {
         appendFileSync(this.logPath, logEntry, "utf8");
       } catch (e) {
         console.error("Failed to write to log file:", e);
       }
-      return; 
+      return;
     }
 
     try {

@@ -1,10 +1,14 @@
-import { app, shell, BrowserWindow, ipcMain } from "electron";
+import { app, shell, BrowserWindow, ipcMain, dialog } from "electron";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import { McpHub } from "./control/mcp-hub";
+import { ToolRegistry } from "./execution/tool-registry";
+import { nativeTools } from "./execution/tools/native";
+import { TeamOrchestrator } from "./team/orchestrator";
 import { TaskManager } from "./control/manager";
 import { LLMService } from "./model/llm-service";
 import { Planner } from "./intelligence/planner";
+import { AgentFactory } from "./agent/factory";
 import {
   initDB,
   getAppSettings,
@@ -95,6 +99,10 @@ app.whenReady().then(async () => {
   const mcpHub = new McpHub();
   const serverPath = join(__dirname, "desktop-mcp.js");
 
+  // Initialize Tool Registry
+  const toolRegistry = new ToolRegistry(mcpHub);
+  nativeTools.forEach((t) => toolRegistry.registerNativeTool(t));
+
   // Resolve paths for additional MCP servers
   // In dev (electron-vite), __dirname points to out/main
   // The source files are in src/main/execution/servers
@@ -132,12 +140,22 @@ app.whenReady().then(async () => {
     );
   }
 
-  // Initialize Task Manager
-  const taskManager = new TaskManager(mcpHub);
+  const taskManager = new TaskManager(toolRegistry);
 
   // Initialize Intelligence Layer
   const llmService = new LLMService();
-  const planner = new Planner(llmService, mcpHub, taskManager);
+  const agentFactory = new AgentFactory(llmService, toolRegistry);
+  const teamOrchestrator = new TeamOrchestrator(
+    llmService,
+    toolRegistry,
+    agentFactory,
+  );
+  const planner = new Planner(
+    llmService,
+    toolRegistry,
+    taskManager,
+    teamOrchestrator,
+  );
 
   // Link Interaction Manager with Planner
   interactionManager.setPlanner(planner);
@@ -145,11 +163,11 @@ app.whenReady().then(async () => {
   // IPC Handlers Registration (Before app.whenReady to avoid race conditions with renderer)
   // MCP Handlers
   ipcMain.handle("mcp:call-tool", async (_, { serverName, toolName, args }) => {
-    return await mcpHub.callTool(serverName, toolName, args);
+    return await toolRegistry.callTool(toolName, args);
   });
 
   ipcMain.handle("mcp:get-tools", async () => {
-    return await mcpHub.getAllTools();
+    return await toolRegistry.getAllTools();
   });
 
   // Task Handlers
@@ -166,9 +184,9 @@ app.whenReady().then(async () => {
   });
 
   // Intelligence Handlers
-  ipcMain.handle("intelligence:plan", async (_, { goal, modelConfig }) => {
-    return await planner.createPlanFromGoal(goal, modelConfig);
-  });
+  // ipcMain.handle("intelligence:plan", async (_, { goal, modelConfig }) => {
+  //   return await planner.createPlanFromGoal(goal, modelConfig);
+  // });
 
   // DB Handlers
   // Ensure we remove existing handlers to avoid duplicates on hot reload
@@ -203,7 +221,7 @@ app.whenReady().then(async () => {
     return summarizeSession(messages, sessionId || "global");
   });
 
-  // Window Control Handlers
+  // Dialog Handlers
   ipcMain.on("window:minimize", () => {
     const win = BrowserWindow.getFocusedWindow();
     win?.minimize();
@@ -221,6 +239,18 @@ app.whenReady().then(async () => {
   ipcMain.on("window:close", () => {
     const win = BrowserWindow.getFocusedWindow();
     win?.close();
+  });
+
+  // Dialog Handlers (File/Folder Picker)
+  ipcMain.handle("dialog:openDirectory", async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+    });
+    if (canceled) {
+      return null;
+    } else {
+      return filePaths[0];
+    }
   });
 
   try {
@@ -291,12 +321,12 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error("Failed to init MCP Hub:", err);
   }
+});
 
-  app.on("activate", function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+app.on("activate", function () {
+  // On macOS it's common to re-create a window in the app when the
+  // dock icon is clicked and there are no other windows open.
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common

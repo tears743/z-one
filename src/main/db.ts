@@ -127,6 +127,7 @@ export function getAppSettings(): AppSettings {
       DEFAULT_SETTINGS.general.primaryColor,
     ),
     language: getSetting("general_language", DEFAULT_SETTINGS.general.language),
+    agentWorkspace: getSetting("general_agentWorkspace", undefined),
   };
 
   const activeModelId = getSetting(
@@ -170,6 +171,10 @@ export function saveAppSettings(settings: AppSettings) {
     insertSetting.run(
       "general_language",
       JSON.stringify(settings.general.language),
+    );
+    insertSetting.run(
+      "general_agentWorkspace",
+      JSON.stringify(settings.general.agentWorkspace),
     );
     insertSetting.run(
       "active_model_id",

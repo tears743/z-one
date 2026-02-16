@@ -140,8 +140,9 @@ export class LLMService {
     config: ModelConfig,
     jsonMode: boolean = false,
     onChunk?: (chunk: string) => void,
-  ): Promise<string | null> {
-    return generateCompletion(messages, config, jsonMode, onChunk);
+    tools?: any[],
+  ): Promise<any> {
+    return generateCompletion(messages, config, jsonMode, onChunk, tools);
   }
 }
 export interface ChatMessage {
@@ -159,7 +160,8 @@ export async function generateCompletion(
   config: ModelConfig,
   jsonMode: boolean = false,
   onChunk?: (chunk: string) => void,
-): Promise<string | null> {
+  tools?: any[],
+): Promise<any> {
   const baseURL = config.baseUrl;
   const apiKey = config.apiKey;
 
@@ -168,7 +170,7 @@ export async function generateCompletion(
     `[LLMService] Generating completion for model: ${config.modelId}`,
   );
   logger.debug(
-    `[LLMService] Config details: messages:${JSON.stringify(messages)} BaseURL=${baseURL}, APIKeyPresent=${!!apiKey}, JsonMode=${jsonMode}, Stream=${!!onChunk}`,
+    `[LLMService] Config details: messages:${JSON.stringify(messages)} BaseURL=${baseURL}, APIKeyPresent=${!!apiKey}, JsonMode=${jsonMode}, Stream=${!!onChunk}, Tools=${!!tools}`,
   );
 
   if (!apiKey) {
@@ -218,6 +220,11 @@ export async function generateCompletion(
     response_format: jsonMode ? { type: "json_object" } : undefined,
   };
 
+  // Add tools if provided
+  if (tools && tools.length > 0) {
+    params.tools = tools;
+  }
+
   // Add advanced parameters if configured
   if (config.temperature !== undefined) {
     params.temperature = config.temperature;
@@ -225,10 +232,29 @@ export async function generateCompletion(
 
   if (config.maxTokens !== undefined) {
     // For reasoning models (often indicated by enableThinking), standard is max_completion_tokens
+    // Or if jsonMode is enabled, we might need to be careful with max_tokens
     if (config.enableThinking) {
+      // reasoning models use max_completion_tokens
       params.max_completion_tokens = config.maxTokens;
     } else {
       params.max_tokens = config.maxTokens;
+    }
+  }
+
+  // Enforce JSON Mode via response_format if requested
+  // Note: some models (like gpt-4-turbo) require "json" in the system prompt for json_object to work.
+  if (jsonMode) {
+    params.response_format = { type: "json_object" };
+
+    // Ensure "json" is mentioned in the system message if not already
+    // This is a requirement for OpenAI models when using json_object
+    const systemMsg = params.messages.find((m: any) => m.role === "system");
+    if (
+      systemMsg &&
+      typeof systemMsg.content === "string" &&
+      !systemMsg.content.toLowerCase().includes("json")
+    ) {
+      systemMsg.content += "\nIMPORTANT: Please output valid JSON.";
     }
   }
 
@@ -237,7 +263,8 @@ export async function generateCompletion(
   // Note: If onChunk is NOT provided but config.stream is TRUE, we still stream but just collect the result.
   // This is useful if the model requires streaming (some do) or if we just want to respect the setting.
   const shouldStream = config.stream || !!onChunk;
-  if (shouldStream) {
+  if (shouldStream && !tools) {
+    // Disable streaming if tools are used for now to simplify handling
     params.stream = true;
 
     // For reasoning/thinking models, we might need specific stream options if available
@@ -248,7 +275,7 @@ export async function generateCompletion(
   }
 
   try {
-    if (shouldStream) {
+    if (shouldStream && !tools) {
       return await streamChatCompletionViaSSE({
         baseUrl: baseURL || undefined,
         apiKey,
@@ -257,7 +284,15 @@ export async function generateCompletion(
       });
     } else {
       const response = await openai.chat.completions.create(params);
-      return response.choices[0].message.content;
+      const message = response.choices[0].message;
+
+      // If tools were requested, return the full message object
+      if (tools) {
+        return message;
+      }
+
+      // Otherwise return just content string for backward compatibility
+      return message.content;
     }
   } catch (error) {
     logger.error(

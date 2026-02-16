@@ -1,16 +1,16 @@
 
 import { randomUUID } from 'crypto';
-import { McpHub } from './mcp-hub';
+import { ToolRegistry } from '../execution/tool-registry';
 import { Task, Plan, TaskStatus } from './types';
 import { logger } from '../logger';
 
 export class TaskManager {
   private currentPlan: Plan | null = null;
-  private mcpHub: McpHub;
+  private toolRegistry: ToolRegistry;
   private isExecuting: boolean = false;
 
-  constructor(mcpHub: McpHub) {
-    this.mcpHub = mcpHub;
+  constructor(toolRegistry: ToolRegistry) {
+    this.toolRegistry = toolRegistry;
   }
 
   public createPlan(goal: string): Plan {
@@ -59,7 +59,7 @@ export class TaskManager {
       for (const task of this.currentPlan.tasks) {
         if (task.status === 'pending') {
           await this.executeTask(task);
-          if (task.status === 'failed') {
+          if ((task.status as TaskStatus) === 'failed') {
             this.currentPlan.status = 'failed';
             logger.error(`Plan failed at task: ${task.description}`);
             break;
@@ -107,8 +107,7 @@ export class TaskManager {
     while (task.retryCount <= task.maxRetries) {
       try {
         // 1. Execute
-        const result = await this.mcpHub.callTool(
-            "unknown", // Hub will find the server
+        const result = await this.toolRegistry.callTool(
             task.toolName!, 
             task.toolArgs
         );
