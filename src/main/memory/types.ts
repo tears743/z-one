@@ -1,8 +1,7 @@
-
 export interface MemoryFragment {
   id: string;
   content: string;
-  layer: 'execution' | 'control' | 'decision' | 'user';
+  layer: "execution" | "control" | "decision" | "user" | "knowledge";
   source: string; // e.g., 'session', 'file', 'user'
   sessionId: string;
   timestamp: number;
@@ -13,7 +12,7 @@ export interface MemoryFragment {
 export interface MemorySearchOptions {
   limit?: number;
   minScore?: number;
-  layer?: 'execution' | 'control' | 'decision' | 'user';
+  layer?: "execution" | "control" | "decision" | "user" | "knowledge";
   sessionId?: string;
   includeEmbedding?: boolean;
 }

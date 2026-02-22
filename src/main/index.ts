@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from "electron";
+import * as fs from "fs";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import { McpHub } from "./control/mcp-hub";
@@ -71,6 +72,7 @@ app.whenReady().then(async () => {
 
   // Initialize Memory Store
   initMemoryStore();
+
   setSettingsGetter(() => {
     try {
       return getAppSettings();
@@ -79,6 +81,26 @@ app.whenReady().then(async () => {
       return undefined;
     }
   });
+
+  // Initialize Memory Indexer
+  const { MemoryIndexer } = await import("./memory/indexer");
+  const indexer = new MemoryIndexer();
+
+  // Watch the workspace memory directory for RAG
+  const appSettings = getAppSettings();
+  const workspaceRoot =
+    appSettings?.general?.agentWorkspace || join(process.cwd(), "workspace");
+  const memoryDir = join(workspaceRoot, "memory");
+
+  try {
+    if (!fs.existsSync(memoryDir)) {
+      fs.mkdirSync(memoryDir, { recursive: true });
+    }
+  } catch (e) {
+    console.error("Failed to create memory directory for indexer:", e);
+  }
+
+  indexer.watchDirectory(memoryDir);
 
   // Set app user model id for windows
   electronApp.setAppUserModelId("com.electron");

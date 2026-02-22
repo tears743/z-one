@@ -140,6 +140,11 @@ export function getAppSettings(): AppSettings {
     DEFAULT_SETTINGS.activeEmbeddingModelId,
   );
 
+  const agentModelId = getSetting(
+    "agent_model_id",
+    DEFAULT_SETTINGS.agentModelId || DEFAULT_SETTINGS.activeModelId,
+  );
+
   // Load Models
   const models = getModels();
 
@@ -151,6 +156,7 @@ export function getAppSettings(): AppSettings {
     models: finalModels,
     activeModelId,
     activeEmbeddingModelId,
+    agentModelId,
   };
 }
 
@@ -183,6 +189,10 @@ export function saveAppSettings(settings: AppSettings) {
     insertSetting.run(
       "active_embedding_model_id",
       JSON.stringify(settings.activeEmbeddingModelId),
+    );
+    insertSetting.run(
+      "agent_model_id",
+      JSON.stringify(settings.agentModelId || settings.activeModelId),
     );
 
     // Sync Models (Smart Sync)

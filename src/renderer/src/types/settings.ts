@@ -35,6 +35,7 @@ export interface AppSettings {
   models: ModelConfig[];
   activeModelId: string; // ID of the currently selected ModelConfig (LLM/Multimodal)
   activeEmbeddingModelId?: string; // ID of the currently selected Embedding Model
+  agentModelId?: string; // ID of the selected Agent model
 }
 
 export const DEFAULT_MODELS: ModelConfig[] = [
@@ -98,4 +99,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   models: DEFAULT_MODELS,
   activeModelId: "openai-gpt-4o",
   activeEmbeddingModelId: "openai-text-embedding-3-small",
+  agentModelId: "openai-gpt-4o",
 };

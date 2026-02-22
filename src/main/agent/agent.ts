@@ -57,18 +57,34 @@ export class Agent {
     // Prepare Tools
     const tools = await this.getNativeTools();
 
+    // Check if we should use native tools or legacy tooling
+    // Reasoning models (enableThinking=true) often don't support native tools well
+    // or prefer to output reasoning text first.
+    // If legacy tooling is used, we don't pass tools to the API, forcing the model
+    // to output text (JSON) which we parse.
+    const useNativeTools = !this.config.modelConfig?.enableThinking;
+
     while (steps < MAX_STEPS) {
       steps++;
 
       try {
         // 1. Prepare messages for LLM
-        const messages: ChatMessage[] = this.history.map((m) => ({
-          role: m.role,
-          content: m.content as any, // Cast for compatibility with ChatMessage
-          name: m.name,
-          tool_calls: m.tool_calls,
-          tool_call_id: m.tool_call_id,
-        }));
+        const messages: ChatMessage[] = this.history.map((m) => {
+          const base: any = {
+            role: m.role,
+            content: m.content as any, // Cast for compatibility with ChatMessage
+            name: m.name,
+          };
+
+          // Only tool messages need tool_call_id when sent to the provider.
+          // We intentionally do NOT forward historical assistant.tool_calls
+          // to avoid providers requiring matching tool role messages for them.
+          if (m.role === "tool" && m.tool_call_id) {
+            base.tool_call_id = m.tool_call_id;
+          }
+
+          return base as ChatMessage;
+        });
 
         // 2. Call LLM
         let fullResponse = "";
@@ -80,7 +96,7 @@ export class Agent {
             fullResponse += chunk;
             if (onChunk) onChunk(chunk);
           },
-          tools,
+          useNativeTools ? tools : undefined,
         );
 
         if (!response) {
@@ -156,10 +172,39 @@ export class Agent {
         // Handle Text Response (Legacy or Final Answer)
         const content =
           typeof response === "string" ? response : response.content;
+        const refusal = typeof response === "object" ? response.refusal : null;
 
         if (!content) {
-          // Should have been handled by tool_calls check, but if we get here with empty content:
-          throw new Error("Received empty content and no tool calls");
+          if (refusal) {
+            logger.warn(`[Agent] Model refused response: ${refusal}`);
+            return `I cannot complete this request. The model refused: ${refusal}`;
+          }
+
+          // If we expected native tools but got nothing, check if we have tool calls
+          if (
+            useNativeTools &&
+            response.tool_calls &&
+            response.tool_calls.length > 0
+          ) {
+            // This case is handled above, so if we are here, we truly have no content and no tools.
+          }
+
+          logger.error("[Agent] Received empty content and no tool calls", {
+            response: JSON.stringify(response),
+            history: this.history.slice(-3),
+          });
+
+          // Retry logic could go here, but for now, let's provide a better error message
+          // or fallback if useLegacyTooling was intended but failed.
+          if (!useNativeTools) {
+            // If we expected text (JSON) but got empty, maybe the model is confused.
+            // We can return a prompt to the model to "Please output JSON".
+            // But strictly, we should throw.
+          }
+
+          throw new Error(
+            `Received empty content and no tool calls. Response: ${JSON.stringify(response)}`,
+          );
         }
 
         this.history.push({ role: "assistant", content: content });
@@ -178,10 +223,17 @@ export class Agent {
             parsed = JSON.parse(match[1]);
           } else {
             // Fallback: Try to find valid JSON object in text
+            // We look for the LAST valid JSON object that looks like an action
             const start = content.indexOf("{");
             const end = content.lastIndexOf("}");
             if (start !== -1 && end !== -1) {
-              parsed = JSON.parse(content.substring(start, end + 1));
+              try {
+                const potentialJson = content.substring(start, end + 1);
+                parsed = JSON.parse(potentialJson);
+              } catch (e) {
+                // If strict parse fails, maybe there are multiple JSONs or noise.
+                // Try to find a JSON with "action" property.
+              }
             }
           }
         } catch (e) {
@@ -198,6 +250,13 @@ export class Agent {
             this.state.status = "idle";
             if (onStep) onStep(`**Final Answer**: ${finalAnswer}`);
             return finalAnswer;
+          }
+
+          // Verify permission for legacy actions
+          if (!this.config.tools.includes(parsed.action)) {
+            throw new Error(
+              `Tool ${parsed.action} not permitted for agent ${this.config.name}`,
+            );
           }
 
           this.state.status = "acting";

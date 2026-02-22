@@ -50,9 +50,12 @@ export function initMemoryStore() {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_fragments_session_ts ON fragments(session_id, timestamp);",
   );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_fragments_source ON fragments(source);",
+  );
 
   // 2. Vector storage (sqlite-vec)
-  // Table creation is deferred until we know the dimensions
+  // Table creation is deferred until we know the dimensions in ensureVectorTable
 
   // 3. FTS storage (Keyword Search)
   db.exec(`
@@ -97,195 +100,210 @@ export function ensureVectorTable(dimensions: number) {
       );
       db.exec("DROP TABLE vec_fragments");
     }
-
-    db.exec(`
-            CREATE VIRTUAL TABLE vec_fragments USING vec0(
-              id TEXT PRIMARY KEY,
-              embedding float[${dimensions}]
-            );
-        `);
-    console.log(
-      `[MemoryStore] Created vector table with ${dimensions} dimensions`,
-    );
   } catch (e) {
-    console.error("[MemoryStore] Failed to ensure vector table:", e);
-    throw e;
+    // Table might not exist, ignore
   }
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS vec_fragments USING vec0(
+      id TEXT PRIMARY KEY,
+      embedding float[${dimensions}]
+    );
+  `);
 }
 
 export function saveFragment(fragment: MemoryFragment) {
   if (!db) throw new Error("DB not initialized");
 
+  const insertFragment = db.prepare(`
+    INSERT OR REPLACE INTO fragments (id, content, layer, source, session_id, timestamp, tags)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertVector = db.prepare(`
+    INSERT OR REPLACE INTO vec_fragments (id, embedding)
+    VALUES (?, ?)
+  `);
+
+  const insertFTS = db.prepare(`
+    INSERT INTO fts_fragments (content, id)
+    VALUES (?, ?)
+  `);
+
   const transaction = db.transaction(() => {
-    // 1. Insert into fragments
-    const insertFrag = db!.prepare(`
-      INSERT OR REPLACE INTO fragments (id, content, layer, source, session_id, timestamp, tags)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    insertFrag.run(
+    insertFragment.run(
       fragment.id,
       fragment.content,
       fragment.layer,
       fragment.source,
-      fragment.sessionId,
+      fragment.sessionId || "global",
       fragment.timestamp,
-      JSON.stringify(fragment.tags || []),
+      JSON.stringify(fragment.tags),
     );
 
-    // 2. Insert into vec_fragments
-    if (fragment.embedding && fragment.embedding.length > 0) {
-      // Ensure table exists (this might be slow if called every time, but safe)
-      // Ideally caller ensures it, but we can double check or catch error
-      // For performance, we assume caller called ensureVectorTable or we check cache.
-      // We'll rely on the caller (manager) to ensure dimensions match.
-
-      const insertVec = db!.prepare(`
-        INSERT OR REPLACE INTO vec_fragments (id, embedding)
-        VALUES (?, ?)
-      `);
-      insertVec.run(fragment.id, new Float32Array(fragment.embedding));
+    // Update Vector
+    if (fragment.embedding) {
+      // Ensure vector table exists (it should, handled by addMemory -> ensureVectorTable)
+      insertVector.run(
+        fragment.id,
+        Buffer.from(new Float32Array(fragment.embedding).buffer),
+      );
     }
 
-    // 3. Insert into fts_fragments
-    const insertFts = db!.prepare(`
-      INSERT INTO fts_fragments (rowid, content)
-      SELECT rowid, content FROM fragments WHERE id = ?
-    `);
-    // Delete old FTS entry if exists? FTS5 manages updates?
-    // FTS external content table is better, but here we use separate table.
-    // We should delete old entry first to avoid duplicates if ID exists.
-    // Or we use 'delete' command.
-
-    // Simplest for now: DELETE matches content? No.
-    // FTS doesn't have ID as primary key in this schema.
-    // Refined FTS Schema: content, id UNINDEXED.
-    // We should Delete where id matches.
-    db!.prepare("DELETE FROM fts_fragments WHERE id = ?").run(fragment.id);
-
-    db!
-      .prepare(
-        `
-      INSERT INTO fts_fragments (content, id)
-      VALUES (?, ?)
-    `,
-      )
-      .run(fragment.content, fragment.id);
+    // Update FTS (keyword index, independent of main rowid)
+    insertFTS.run(fragment.content, fragment.id);
   });
 
   transaction();
 }
 
-export function searchVector(
-  embedding: number[],
-  limit: number = 10,
-  sessionId: string = "global",
-): { id: string; score: number }[] {
+export function deleteFragmentsBySource(source: string) {
   if (!db) throw new Error("DB not initialized");
 
-  // Check if vec_fragments exists
-  const tableExists = db
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_fragments'",
-    )
-    .get();
-  if (!tableExists) return [];
+  // 1. Get IDs to delete
+  const ids = db
+    .prepare("SELECT id FROM fragments WHERE source = ?")
+    .all(source) as { id: string }[];
+  if (ids.length === 0) return;
 
-  let results: { id: string; distance: number }[] = [];
-  try {
-    const stmt = db.prepare(`
-      SELECT
-        v.id,
-        v.distance
-      FROM vec_fragments v
-      JOIN fragments f ON f.id = v.id
-      WHERE f.session_id = ? AND v.embedding MATCH ?
-      ORDER BY v.distance
-      LIMIT ?
-    `);
-    results = stmt.all(sessionId, new Float32Array(embedding), limit) as {
-      id: string;
-      distance: number;
-    }[];
-  } catch {
-    const stmt = db.prepare(`
-      SELECT
-        id,
-        distance
-      FROM vec_fragments
-      WHERE embedding MATCH ?
-      ORDER BY distance
-      LIMIT ?
-    `);
-    results = stmt.all(new Float32Array(embedding), limit * 8) as {
-      id: string;
-      distance: number;
-    }[];
-  }
+  const deleteFragment = db.prepare("DELETE FROM fragments WHERE id = ?");
+  const deleteVector = db.prepare("DELETE FROM vec_fragments WHERE id = ?");
 
-  return results.map((r) => ({
-    id: r.id,
-    score: 1 / (1 + r.distance), // Convert distance to similarity score
-  }));
+  // FTS delete is harder without rowid mapping, skipping for now as it's just keyword search index.
+
+  const transaction = db.transaction(() => {
+    for (const { id } of ids) {
+      deleteFragment.run(id);
+      try {
+        deleteVector.run(id);
+      } catch (e) {
+        // Vector table might not exist or ID not in it
+      }
+    }
+  });
+
+  transaction();
+  console.log(
+    `[MemoryStore] Deleted ${ids.length} fragments from source: ${source}`,
+  );
 }
 
-export function searchKeyword(
-  query: string,
-  limit: number = 10,
-  sessionId: string = "global",
-): { id: string }[] {
+export function searchSimilar(
+  embedding: number[],
+  options: MemorySearchOptions = {},
+): MemorySearchResult[] {
   if (!db) throw new Error("DB not initialized");
 
-  // Sanitize query for FTS5
-  // Replace FTS5 reserved characters with spaces to prevent syntax errors
-  // Reserved: " * + - ^ : ( ) { } [ ] AND OR NOT
-  const safeQuery = query.replace(/["*+\-^:(){}\[\]]/g, " ").trim();
-  
-  // If query becomes empty or just boolean operators, handle gracefully
-  if (!safeQuery) return [];
+  const limit = options.limit || 5;
 
-  // Simple tokenization: treat as AND query by default if multiple words?
-  // FTS5 default is AND. "foo bar" matches documents with foo AND bar.
-  
-  const stmt = db.prepare(`
-    SELECT t.id
-    FROM fts_fragments t
-    JOIN fragments f ON f.id = t.id
-    WHERE t.content MATCH ? AND f.session_id = ?
-    ORDER BY t.rank
-    LIMIT ?
-  `);
+  // Vector Search using sqlite-vec
+  const query = `
+    SELECT
+      v.id,
+      v.distance
+    FROM vec_fragments v
+    WHERE v.embedding MATCH ?
+    AND k = ?
+    ORDER BY v.distance
+  `;
 
   try {
-    const results = stmt.all(safeQuery, sessionId, limit) as { id: string }[];
+    const vectorResults = db
+      .prepare(query)
+      .all(Buffer.from(new Float32Array(embedding).buffer), limit) as Array<{
+      id: string;
+      distance: number;
+    }>;
+
+    // Hydrate with content
+    const results: MemorySearchResult[] = [];
+    const getFragment = db.prepare("SELECT * FROM fragments WHERE id = ?");
+
+    for (const vec of vectorResults) {
+      const fragment = getFragment.get(vec.id) as any;
+      if (fragment) {
+        if (options.layer && fragment.layer !== options.layer) continue;
+        if (options.sessionId && fragment.sessionId !== options.sessionId)
+          continue;
+
+        results.push({
+          id: fragment.id,
+          content: fragment.content,
+          layer: fragment.layer,
+          source: fragment.source,
+          sessionId: fragment.session_id,
+          timestamp: fragment.timestamp,
+          tags: JSON.parse(fragment.tags || "[]"),
+          score: 1 - vec.distance, // Convert distance to similarity score
+        });
+      }
+    }
+
     return results;
   } catch (e) {
-    // FTS syntax error (e.g. empty query or special chars)
-    console.warn("FTS search error:", e);
+    console.error("[MemoryStore] Vector search failed:", e);
     return [];
   }
 }
 
-export function getFragments(
-  ids: string[],
-  sessionId: string = "global",
-): MemoryFragment[] {
+export function searchByFts(
+  query: string,
+  options: MemorySearchOptions = {},
+): MemorySearchResult[] {
   if (!db) throw new Error("DB not initialized");
-  if (ids.length === 0) return [];
 
-  const placeholders = ids.map(() => "?").join(",");
-  const stmt = db.prepare(`
-    SELECT * FROM fragments WHERE id IN (${placeholders}) AND session_id = ?
-  `);
+  const limit = options.limit || 5;
 
-  const rows = stmt.all(...ids, sessionId) as any[];
+  const sql = `
+    SELECT
+      f.id,
+      f.content,
+      f.layer,
+      f.source,
+      f.session_id as session_id,
+      f.timestamp,
+      f.tags,
+      bm25(fts_fragments) as rank
+    FROM fts_fragments
+    JOIN fragments f ON fts_fragments.id = f.id
+    WHERE fts_fragments MATCH ?
+    ORDER BY rank
+    LIMIT ?
+  `;
 
-  return rows.map((row) => ({
-    id: row.id,
-    content: row.content,
-    layer: row.layer as any,
-    source: row.source,
-    sessionId: row.session_id,
-    timestamp: row.timestamp,
-    tags: JSON.parse(row.tags || "[]"),
-  }));
+  try {
+    const rows = db.prepare(sql).all(query, limit) as Array<{
+      id: string;
+      content: string;
+      layer: MemoryFragment["layer"];
+      source: string;
+      session_id: string;
+      timestamp: number;
+      tags: string | null;
+      rank: number;
+    }>;
+
+    const results: MemorySearchResult[] = [];
+
+    for (const row of rows) {
+      if (options.layer && row.layer !== options.layer) continue;
+      if (options.sessionId && row.session_id !== options.sessionId) continue;
+
+      results.push({
+        id: row.id,
+        content: row.content,
+        layer: row.layer,
+        source: row.source,
+        sessionId: row.session_id,
+        timestamp: row.timestamp,
+        tags: JSON.parse(row.tags || "[]"),
+        score: row.rank != null ? -row.rank : 1,
+      });
+    }
+
+    return results;
+  } catch (e) {
+    console.error("[MemoryStore] FTS search failed:", e);
+    return [];
+  }
 }

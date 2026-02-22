@@ -57,6 +57,15 @@ async function streamChatCompletionViaSSE(args: {
     try {
       const json = JSON.parse(data);
       const content = json?.choices?.[0]?.delta?.content;
+      const reasoning =
+        json?.choices?.[0]?.delta?.reasoning_content ||
+        json?.choices?.[0]?.delta?.reasoning;
+
+      if (typeof reasoning === "string" && reasoning.length > 0) {
+        fullContent += reasoning;
+        args.onChunk?.(reasoning);
+      }
+
       if (typeof content === "string" && content.length > 0) {
         fullContent += content;
         args.onChunk?.(content);
@@ -93,10 +102,121 @@ async function streamChatCompletionViaSSE(args: {
   return fullContent;
 }
 
+async function generateEmbeddingOllama(
+  text: string,
+  config: ModelConfig,
+): Promise<number[]> {
+  const baseURL = (config.baseUrl || "http://127.0.0.1:11434").replace(
+    /\/$/,
+    "",
+  );
+
+  const callOnce = async (input: string): Promise<number[]> => {
+    const res = await fetch(`${baseURL}/api/embeddings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.modelId || "nomic-embed-text",
+        prompt: input,
+      }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(
+        `Ollama embedding request failed (${res.status}): ${
+          msg || res.statusText
+        }`,
+      );
+    }
+
+    const json = (await res.json()) as any;
+    const embedding = json?.embedding;
+    if (!Array.isArray(embedding)) {
+      throw new Error("Invalid embedding response from Ollama");
+    }
+    return embedding.map((v: any) => Number(v) || 0);
+  };
+
+  const MAX_CHARS = 4000;
+  const OVERLAP = 200;
+
+  if (text.length <= MAX_CHARS) {
+    return await callOnce(text);
+  }
+
+  const parts: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    const end = Math.min(start + MAX_CHARS, text.length);
+    parts.push(text.slice(start, end));
+    if (end === text.length) break;
+    start = end - OVERLAP;
+    if (start < 0) start = 0;
+  }
+
+  logger.warn(
+    "[LLMService] Long text for Ollama embedding, splitting into parts",
+    {
+      originalLength: text.length,
+      parts: parts.length,
+      maxCharsPerPart: MAX_CHARS,
+      overlap: OVERLAP,
+      modelId: config.modelId,
+    },
+  );
+
+  const vectors: number[][] = [];
+  for (const part of parts) {
+    try {
+      const v = await callOnce(part);
+      vectors.push(v);
+    } catch (e) {
+      logger.error(
+        "[LLMService] Failed to embed one part of long text with Ollama, aborting aggregation",
+        e,
+      );
+      throw e;
+    }
+  }
+
+  if (vectors.length === 0) {
+    throw new Error("No embeddings generated for long text");
+  }
+
+  const dim = vectors[0].length;
+  const agg = new Array(dim).fill(0);
+  for (const v of vectors) {
+    if (v.length !== dim) continue;
+    for (let i = 0; i < dim; i++) {
+      agg[i] += v[i];
+    }
+  }
+  for (let i = 0; i < dim; i++) {
+    agg[i] /= vectors.length;
+  }
+
+  return agg;
+}
+
 export async function generateEmbedding(
   text: string,
   config: ModelConfig,
 ): Promise<number[]> {
+  if (config.provider === "ollama") {
+    try {
+      return await generateEmbeddingOllama(text, config);
+    } catch (error) {
+      logger.error(
+        `Failed to generate embedding with Ollama model ${config.modelId}`,
+        error,
+      );
+      throw error;
+    }
+  }
+
   const baseURL = config.baseUrl;
   const apiKey = config.apiKey;
 
@@ -111,7 +231,7 @@ export async function generateEmbedding(
 
   try {
     const response = await openai.embeddings.create({
-      model: config.modelId, // Use configured model ID
+      model: config.modelId,
       input: text,
     });
 
@@ -184,39 +304,42 @@ export async function generateCompletion(
     baseURL: baseURL || undefined,
     apiKey,
   });
+  const msg = messages.map((m) => {
+    // Ensure content is properly formatted for OpenAI
+    if (Array.isArray(m.content)) {
+      return {
+        role: m.role,
+        content: m.content.map((part) => {
+          if (part.type === "image_url") {
+            let url = part.image_url.url;
 
+            // Ensure Base64 has correct Data URI prefix
+            // If it's a raw base64 string (no scheme), assume it's the JPEG we generated
+            if (!url.startsWith("http") && !url.startsWith("data:")) {
+              url = `data:image/png;base64,${url}`;
+            }
+
+            return {
+              type: "image_url",
+              image_url: {
+                url: url,
+                detail: "auto",
+              },
+            };
+          }
+          return part;
+        }),
+      };
+    }
+    return m;
+  });
+  logger.debug(
+    `[LLMService] Prepared messages: ${JSON.stringify(msg, null, 2)}`,
+  );
   // Prepare parameters
   const params: any = {
     model: config.modelId,
-    messages: messages.map((m) => {
-      // Ensure content is properly formatted for OpenAI
-      if (Array.isArray(m.content)) {
-        return {
-          role: m.role,
-          content: m.content.map((part) => {
-            if (part.type === "image_url") {
-              let url = part.image_url.url;
-
-              // Ensure Base64 has correct Data URI prefix
-              // If it's a raw base64 string (no scheme), assume it's the JPEG we generated
-              if (!url.startsWith("http") && !url.startsWith("data:")) {
-                url = `data:image/png;base64,${url}`;
-              }
-
-              return {
-                type: "image_url",
-                image_url: {
-                  url: url,
-                  detail: "auto",
-                },
-              };
-            }
-            return part;
-          }),
-        };
-      }
-      return m;
-    }) as any,
+    messages: msg,
     response_format: jsonMode ? { type: "json_object" } : undefined,
   };
 
@@ -263,7 +386,9 @@ export async function generateCompletion(
   // Note: If onChunk is NOT provided but config.stream is TRUE, we still stream but just collect the result.
   // This is useful if the model requires streaming (some do) or if we just want to respect the setting.
   const shouldStream = config.stream || !!onChunk;
-  if (shouldStream && !tools) {
+  const hasTools = tools && tools.length > 0;
+
+  if (shouldStream && !hasTools) {
     // Disable streaming if tools are used for now to simplify handling
     params.stream = true;
 

@@ -1,11 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { X, Plus, Trash2, Save, Check } from "lucide-react";
-import {
-  AppSettings,
-  ModelConfig,
-  ModelProvider,
-  DEFAULT_MODELS,
-} from "../types/settings";
+import { AppSettings, ModelConfig, ModelProvider } from "../types/settings";
 import { t, translations } from "../utils/translations";
 
 interface SettingsModalProps {
@@ -16,15 +11,15 @@ interface SettingsModalProps {
   trans: typeof translations.en;
 }
 
-const LOCKED_PROVIDER: ModelProvider = "openai";
-
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   settings,
   onSave,
 }) => {
-  const [activeTab, setActiveTab] = useState<"general" | "models">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "agent" | "models">(
+    "general",
+  );
   const [localSettings, setLocalSettings] = useState<AppSettings>(settings);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const trans = t(localSettings.general.language);
@@ -32,13 +27,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Reset local state when opening
   useEffect(() => {
     if (isOpen) {
-      setLocalSettings({
-        ...settings,
-        models: settings.models.map((m) => ({
-          ...m,
-          provider: LOCKED_PROVIDER,
-        })),
-      });
+      setLocalSettings(settings);
     }
   }, [isOpen, settings]);
 
@@ -85,10 +74,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     const lockedSettings: AppSettings = {
       ...localSettings,
-      models: localSettings.models.map((m) => ({
-        ...m,
-        provider: LOCKED_PROVIDER,
-      })),
     };
 
     onSave(lockedSettings);
@@ -108,16 +93,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const updateModel = (id: string, updates: Partial<ModelConfig>) => {
     setLocalSettings((prev) => ({
       ...prev,
-      models: prev.models.map((m) =>
-        m.id === id ? { ...m, ...updates, provider: LOCKED_PROVIDER } : m,
-      ),
+      models: prev.models.map((m) => (m.id === id ? { ...m, ...updates } : m)),
     }));
   };
 
   const addModel = () => {
     const newModel: ModelConfig = {
       id: crypto.randomUUID(),
-      provider: LOCKED_PROVIDER,
+      provider: "openai",
       name: "New Model",
       modelId: "",
       enabled: true,
@@ -176,6 +159,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               label={trans.general}
               active={activeTab === "general"}
               onClick={() => setActiveTab("general")}
+            />
+            <SidebarItem
+              label={trans.agent}
+              active={activeTab === "agent"}
+              onClick={() => setActiveTab("agent")}
             />
             <SidebarItem
               label={trans.models}
@@ -403,6 +391,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
+            {activeTab === "agent" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}
+              >
+                <Section title={trans.agentModel}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                    }}
+                  >
+                    <label className="form-label">
+                      {trans.agentModel}:
+                      <select
+                        value={
+                          localSettings.agentModelId ||
+                          localSettings.activeModelId
+                        }
+                        onChange={(e) =>
+                          setLocalSettings((prev) => ({
+                            ...prev,
+                            agentModelId: e.target.value,
+                          }))
+                        }
+                        className="form-select"
+                      >
+                        {localSettings.models
+                          .filter(
+                            (m) => m.enabled && m.modelType !== "embedding",
+                          )
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <div
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      {trans.activeChatModel}:{" "}
+                      {
+                        (
+                          localSettings.models.find(
+                            (m) => m.id === localSettings.activeModelId,
+                          ) || {}
+                        ).name
+                      }
+                    </div>
+                  </div>
+                </Section>
+              </div>
+            )}
+
             {activeTab === "models" && (
               <div
                 style={{
@@ -528,15 +578,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             />
                           </Field>
                           <Field label={trans.apiType}>
-                            <input
-                              value={LOCKED_PROVIDER}
-                              disabled
-                              className="form-input"
-                              style={{
-                                opacity: 0.8,
-                                cursor: "not-allowed",
-                              }}
-                            />
+                            <select
+                              value={model.provider}
+                              onChange={(e) =>
+                                updateModel(model.id, {
+                                  provider: e.target.value as ModelProvider,
+                                })
+                              }
+                              className="form-select"
+                            >
+                              <option value="openai">openai</option>
+                              <option value="ollama">ollama</option>
+                              <option value="anthropic">anthropic</option>
+                              <option value="gemini">gemini</option>
+                              <option value="deepseek">deepseek</option>
+                              <option value="minimax">minimax</option>
+                              <option value="qwen">qwen</option>
+                            </select>
                           </Field>
                           <Field label={trans.modelType}>
                             <select

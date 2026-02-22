@@ -54,12 +54,6 @@ export class Planner {
   ): Promise<string> {
     const sessionId = rawSessionId || "global";
 
-    // 1. Create Input Agent for this device
-    const inputAgent = this.agentFactory.createInputAgent(deviceId);
-
-    // Load History
-    const history = await this.sessionStore.loadSession(sessionId);
-
     // RAG: Search Long-Term Memory
     let memoryContext = "";
     try {
@@ -69,25 +63,30 @@ export class Planner {
         sessionId,
       });
       if (relevantMemories.length > 0) {
-        memoryContext = `\n\n[Relevant Long-Term Memory]:\n${relevantMemories.map((m) => `- ${m.content} (Source: ${m.source})`).join("\n")}`;
+        memoryContext = relevantMemories
+          .map((m) => `- ${m.content} (Source: ${m.source})`)
+          .join("\n");
       }
     } catch (e) {
       logger.warn("Failed to search memory", e);
     }
 
-    if (history.length > 0 || memoryContext) {
-      inputAgent.setHistory([
-        {
-          role: "system",
-          content: inputAgent.config.systemPrompt + memoryContext,
-        },
-        ...history,
-      ]);
-    }
+    // 1. Create Input Agent for this device
+    // const inputAgent = this.agentFactory.createInputAgent(
+    //   deviceId,
+    //   memoryContext,
+    // );
+
+    // Load History
+    const history = await this.sessionStore.loadSession(sessionId);
+
+    // if (history.length > 0) {
+    //   inputAgent.setHistory(history);
+    // }
 
     // Pass model config to agent
     const internalConfig = { ...modelConfig, stream: false };
-    inputAgent.config.modelConfig = internalConfig;
+    // inputAgent.config.modelConfig = internalConfig;
 
     // 2. Process raw input to understand intent
     const logContent =
@@ -112,6 +111,7 @@ export class Planner {
           "user",
           ["interaction", deviceId],
           sessionId,
+          // TODO: This should be "session" but we use "user" layer for now
         );
       }
     } catch (e) {
@@ -130,14 +130,35 @@ export class Planner {
       logger.error("Failed to persist input to file session", e);
     }
 
-    const refinedIntent = await inputAgent.process(content);
-    logger.info(`Refined intent: ${refinedIntent}`);
+    // Skip InputAgent LLM processing - treat raw input as refined intent
+    // const refinedIntent = await inputAgent.process(content);
+
+    let refinedIntent = "";
+    if (typeof content === "string") {
+      refinedIntent = content;
+    } else {
+      // Extract text parts from multimodal content for intent analysis
+      refinedIntent = content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
+      if (!refinedIntent) refinedIntent = "[Multimodal Content]";
+    }
+
+    logger.info(`Refined intent (raw pass-through): ${refinedIntent}`);
 
     // 3. Triage (Simple vs Complex)
     const contextHistory = history
       .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
       .join("\n");
-    const fullContext = `User Device: ${deviceId}\nSession ID: ${sessionId}\n\nRecent History:\n${contextHistory}`;
+
+    let fullContext = `User Device: ${deviceId}\nSession ID: ${sessionId}`;
+
+    if (memoryContext) {
+      fullContext += `\n\n[Relevant Long-Term Memory]:\n${memoryContext}`;
+    }
+
+    fullContext += `\n\nRecent History:\n${contextHistory}`;
 
     const triageResult = await this.triageAgent.evaluate(
       refinedIntent,
@@ -353,9 +374,14 @@ export class Planner {
       // Create an Executor Agent for this specific task
       const toolName =
         taskData.toolName === "null" ? undefined : taskData.toolName;
+
+      const selectedTools = toolName
+        ? tools.filter((t) => t.name === toolName)
+        : [];
+
       const executorAgent = this.agentFactory.createExecutorAgent(
         taskData.description,
-        toolName ? [toolName] : [],
+        selectedTools,
       );
 
       // Assign the agent to the task (Conceptually - TaskManager needs update to support Agents)

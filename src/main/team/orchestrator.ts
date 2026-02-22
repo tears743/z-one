@@ -117,14 +117,11 @@ export class TeamOrchestrator {
         member.persona, // Use the full persona as description/prompt base
         member.tools,
         tools, // Pass all tools for prompt generation
+        context, // memoryContext
+        modelConfig, // Pass model config for legacy tooling check
       );
       // Ensure they share the same model config (or allow override if plan specified)
       agent.config.modelConfig = modelConfig;
-
-      // Inject context (Chat History) into agent's memory so they are aware of the conversation
-      // We append it to the system prompt or set it as initial history
-      const systemPromptWithContext = `${agent.config.systemPrompt}\n\n[Conversation Context]:\n${context}`;
-      agent.setHistory([{ role: "system", content: systemPromptWithContext }]);
 
       // Register
       this.teammates.set(member.name, agent);

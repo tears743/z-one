@@ -1,4 +1,5 @@
 import { NativeTool } from "../../tool-registry";
+import dayjs from "dayjs";
 
 export const GetCurrentTimeTool: NativeTool = {
   name: "get_current_time",
@@ -9,12 +10,6 @@ export const GetCurrentTimeTool: NativeTool = {
     properties: {},
   },
   execute: async () => {
-    const now = new Date();
-    return {
-      iso: now.toISOString(),
-      local: now.toLocaleString(),
-      timestamp: now.getTime(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    };
+    return dayjs().format("yyyy-MM-dd HH:mm:ss");
   },
 };

@@ -1,10 +1,16 @@
 import { randomUUID } from "crypto";
 import { generateEmbedding, generateCompletion } from "../model/llm-service";
 import * as store from "./store";
-import { MemoryFragment, MemorySearchResult } from "./types";
+import {
+  MemoryFragment,
+  MemorySearchResult,
+  MemorySearchOptions,
+} from "./types";
 import { AppSettings, ModelConfig } from "../../renderer/src/types/settings";
 import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import * as path from "path";
+import { logger } from "../logger";
 
 // Helper to get settings
 let getSettings: () => AppSettings | undefined;
@@ -57,7 +63,7 @@ async function appendToFile(
 
 export async function addMemory(
   content: string,
-  layer: "execution" | "control" | "decision" | "user",
+  layer: "execution" | "control" | "decision" | "user" | "knowledge",
   source: string = "user",
   tags: string[] = [],
   sessionId: string = "global",
@@ -67,18 +73,24 @@ export async function addMemory(
 
   const id = randomUUID();
 
-  // 1. File Storage (Log)
-  // Note: Chat history logging is handled by FileSessionStore (called via Planner/Interaction Layer).
-  // This function primarily handles Vector/RAG storage.
-  // Ideally, this should also link to the file content, but for now we rely on the session ID.
-  // The 'id' here is the Fragment ID for the vector index, not the Session ID.
+  let embedding: number[] | undefined;
 
-  // 2. Vector Storage (For RAG)
-  const config = resolveEmbeddingModel(settings);
-  const embedding = await generateEmbedding(content, config);
-
-  // Ensure table exists with correct dimensions
-  store.ensureVectorTable(embedding.length);
+  try {
+    const config = resolveEmbeddingModel(settings);
+    if (config.apiKey || config.provider === "ollama") {
+      embedding = await generateEmbedding(content, config);
+      store.ensureVectorTable(embedding.length);
+    } else {
+      logger.warn(
+        "[MemoryManager] Embedding model has no API key, using FTS-only mode",
+      );
+    }
+  } catch (e) {
+    logger.warn(
+      "[MemoryManager] Failed to generate embedding, using FTS-only mode",
+      e,
+    );
+  }
 
   const fragment: MemoryFragment = {
     id,
@@ -97,138 +109,154 @@ export async function addMemory(
 
 export async function searchMemory(
   query: string,
-  options: { limit?: number; layer?: string; sessionId?: string } = {},
+  options: MemorySearchOptions = {},
 ): Promise<MemorySearchResult[]> {
   const settings = getSettings ? getSettings() : undefined;
-  if (!settings) throw new Error("Settings not available");
-
-  const limit = options.limit || 10;
-  const sessionId = options.sessionId || "global";
-
-  // 1. Vector Search
-  let vectorResults: { id: string; score: number }[] = [];
+  if (!settings) {
+    return store.searchByFts(query, options);
+  }
 
   try {
     const config = resolveEmbeddingModel(settings);
+    if (!config.apiKey || config.provider !== "ollama") {
+      logger.warn(
+        "[MemoryManager] Embedding model has no API key, using FTS-only search",
+      );
+      return store.searchByFts(query, options);
+    }
+
     const embedding = await generateEmbedding(query, config);
-    vectorResults = store.searchVector(embedding, limit * 2, sessionId);
-  } catch (e: any) {
-    // Log simpler error message to avoid spamming stack traces for config issues
-    console.warn(`[MemoryManager] Vector search skipped: ${e.message}`);
-  }
-
-  // 2. Keyword Search (FTS)
-  const keywordResults = store.searchKeyword(query, limit, sessionId);
-
-  // 3. Merge
-  const idMap = new Map<string, number>();
-
-  for (const r of vectorResults) {
-    idMap.set(r.id, r.score);
-  }
-
-  for (const r of keywordResults) {
-    if (!idMap.has(r.id)) {
-      idMap.set(r.id, 0.5); // Base score for keyword-only match
-    } else {
-      idMap.set(r.id, (idMap.get(r.id) || 0) + 0.1); // Boost
-    }
-  }
-
-  const allIds = Array.from(idMap.keys());
-  if (allIds.length === 0) return [];
-
-  const fragments = store.getFragments(allIds, sessionId);
-
-  let results: MemorySearchResult[] = fragments.map((f) => ({
-    ...f,
-    score: idMap.get(f.id) || 0,
-  }));
-
-  if (options.layer) {
-    results = results.filter((r) => r.layer === options.layer);
-  }
-
-  results.sort((a, b) => b.score - a.score);
-
-  return results.slice(0, limit);
-}
-
-// Summarization Logic
-export async function summarizeSession(
-  messages: { role: string; content: string }[],
-  sessionId: string = "global",
-): Promise<void> {
-  const settings = getSettings ? getSettings() : undefined;
-  if (!settings) throw new Error("Settings not available");
-
-  const config = resolveChatModel(settings);
-
-  if (messages.length === 0) return;
-
-  // 1. Construct Prompt
-  const transcript = messages
-    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-    .join("\n");
-
-  const prompt = `
-You are a helpful assistant that summarizes conversation history.
-Also provide a short 3-5 word title for this session.
-
-Structure the summary into three layers:
-1. **Decision Layer**: Strategic choices, goals, and high-level directives.
-2. **Control Layer**: Plans, rules, and constraints established.
-3. **Execution Layer**: Specific actions taken, code changes, and technical details.
-
-Transcript:
-${transcript}
-
-Output JSON format:
-{
-  "title": "...",
-  "decision": "...",
-  "control": "...",
-  "execution": "..."
-}
-`;
-
-  // 2. Call LLM
-  try {
-    const content = await generateCompletion(
-      [{ role: "user", content: prompt }],
-      config,
-      true, // jsonMode
-    );
-    if (!content) return;
-
-    let summary;
-    try {
-      summary = JSON.parse(content);
-    } catch (e) {
-      console.error("Failed to parse summary JSON", e);
-      return;
-    }
-
-    // 3. Store in separate layers (Vector DB)
-    if (summary.decision) {
-      await addMemory(summary.decision, "decision", "session_summary", [
-        "summary",
-        sessionId,
-      ]);
-    }
-    if (summary.control) {
-      await addMemory(summary.control, "control", "session_summary", [
-        "summary",
-        sessionId,
-      ]);
-    }
-    if (summary.execution) {
-      await addMemory(summary.execution, "execution", "session_summary", [
-        "summary",
-        sessionId,
-      ]);
-    }
+    store.ensureVectorTable(embedding.length);
+    return store.searchSimilar(embedding, options);
   } catch (e) {
-    console.error("Summarization failed:", e);
+    logger.warn(
+      "[MemoryManager] Embedding search failed, falling back to FTS",
+      e,
+    );
+    return store.searchByFts(query, options);
   }
+}
+
+// --- File Watcher & Sync (OpenClaw style) ---
+
+const MEMORY_FILENAME = "MEMORY.md";
+
+export async function initMemoryWatcher(workspaceDir: string) {
+  const memoryPath = path.join(workspaceDir, MEMORY_FILENAME);
+  logger.info(`[MemoryManager] Initializing watcher for ${memoryPath}`);
+
+  // Ensure file exists
+  try {
+    await fs.access(memoryPath);
+  } catch {
+    await fs.writeFile(
+      memoryPath,
+      "# Project Memory\n\nGlobal memory for the agent. Edit this file to add persistent knowledge.\n",
+    );
+  }
+
+  // Initial sync
+  await syncMemoryFile(memoryPath);
+
+  // Watch for changes
+  // Using fs.watch (native) as chokidar is not strictly required if we just watch one file
+  let fsWait: NodeJS.Timeout | null = null;
+  fsSync.watch(memoryPath, (eventType, filename) => {
+    if (filename && eventType === "change") {
+      if (fsWait) return;
+      // Debounce to avoid multiple events
+      fsWait = setTimeout(async () => {
+        fsWait = null;
+        logger.info(
+          `[MemoryManager] Detected change in ${filename}, syncing...`,
+        );
+        await syncMemoryFile(memoryPath);
+      }, 500);
+    }
+  });
+}
+
+async function syncMemoryFile(filePath: string) {
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    const filename = path.basename(filePath);
+
+    // 1. Clear existing fragments for this file
+    store.deleteFragmentsBySource(filename);
+
+    const chunks = splitMarkdownByHeaders(content);
+
+    for (const chunk of chunks) {
+      if (!chunk.content.trim()) continue;
+      for (const piece of splitByLength(chunk.content)) {
+        if (!piece.trim()) continue;
+        await addMemory(
+          piece,
+          "knowledge",
+          filename,
+          ["memory-file"],
+          "global",
+        );
+      }
+    }
+    logger.info(
+      `[MemoryManager] Synced ${chunks.length} chunks from ${filename}`,
+    );
+  } catch (e) {
+    logger.error(`[MemoryManager] Failed to sync memory file ${filePath}:`, e);
+  }
+}
+
+function splitMarkdownByHeaders(
+  content: string,
+): { header: string; content: string }[] {
+  const lines = content.split("\n");
+  const chunks: { header: string; content: string }[] = [];
+  let currentHeader = "Intro";
+  let currentLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("#")) {
+      if (currentLines.length > 0) {
+        chunks.push({
+          header: currentHeader,
+          content: currentLines.join("\n"),
+        });
+      }
+      currentHeader = line.replace(/^#+\s*/, "").trim();
+      currentLines = [line]; // Include header in content
+    } else {
+      currentLines.push(line);
+    }
+  }
+  if (currentLines.length > 0) {
+    chunks.push({ header: currentHeader, content: currentLines.join("\n") });
+  }
+  return chunks;
+}
+
+function splitByLength(
+  content: string,
+  maxLength: number = 4000,
+  overlap: number = 200,
+): string[] {
+  if (content.length <= maxLength) return [content];
+  const result: string[] = [];
+  let start = 0;
+  while (start < content.length) {
+    const end = Math.min(start + maxLength, content.length);
+    result.push(content.slice(start, end));
+    if (end === content.length) break;
+    start = end - overlap;
+    if (start < 0) start = 0;
+  }
+  return result;
+}
+
+export function summarizeSession(
+  messages: any[],
+  agentRole: string = "assistant",
+): string {
+  // Simple summary for now (placeholder)
+  return `Session summary for ${agentRole} with ${messages.length} messages.`;
 }

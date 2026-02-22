@@ -89,113 +89,141 @@ export const BrowserTypeTool: NativeTool = {
 export const BrowserGetContentTool: NativeTool = {
   name: "browser_get_content",
   description:
-      "Get the text content or HTML of the current page or a specific element. Automatically cleans and truncates content to avoid token limits.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        selector: {
-          type: "string",
-          description:
-            "Optional CSS selector to get content from. If omitted, returns full page text.",
-        },
-        asHtml: {
-          type: "boolean",
-          description: "If true, returns HTML instead of text. Default false.",
-        },
-        maxLength: {
-          type: "number",
-          description: "Maximum character length. Default 8000.",
-        },
+    "Get the text content or HTML of the current page or a specific element. Automatically cleans and truncates content to avoid token limits. Supports pagination via offset.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      selector: {
+        type: "string",
+        description:
+          "Optional CSS selector to get content from. If omitted, returns full page text.",
+      },
+      asHtml: {
+        type: "boolean",
+        description: "If true, returns HTML instead of text. Default false.",
+      },
+      maxLength: {
+        type: "number",
+        description: "Maximum character length. Default 8000.",
+      },
+      offset: {
+        type: "number",
+        description:
+          "Start index for content extraction. Default 0. Use this to read more content if previous result was truncated.",
       },
     },
-    execute: async (args: {
-      selector?: string;
-      asHtml?: boolean;
-      maxLength?: number;
-    }) => {
-      const page = await browserManager.getPage();
-      const maxLength = args.maxLength || 8000;
-  
-      if (args.selector) {
+  },
+  execute: async (args: {
+    selector?: string;
+    asHtml?: boolean;
+    maxLength?: number;
+    offset?: number;
+  }) => {
+    const page = await browserManager.getPage();
+    const maxLength = args.maxLength || 8000;
+    const offset = args.offset || 0;
+
+    if (args.selector) {
       if (args.asHtml) {
         const html = await page.innerHTML(args.selector);
-        return html.length > maxLength
-          ? html.substring(0, maxLength) + "...[Truncated]"
-          : html;
+        const sliced = html.substring(offset, offset + maxLength);
+        return html.length > offset + maxLength
+          ? sliced +
+              `\n\n...[Content Truncated. Total length: ${html.length}. Use offset=${offset + maxLength} to read more]...`
+          : sliced;
       } else {
         const text = await page.innerText(args.selector);
-        return text.length > maxLength
-          ? text.substring(0, maxLength) + "...[Truncated]"
-          : text;
+        const sliced = text.substring(offset, offset + maxLength);
+        return text.length > offset + maxLength
+          ? sliced +
+              `\n\n...[Content Truncated. Total length: ${text.length}. Use offset=${offset + maxLength} to read more]...`
+          : sliced;
       }
     } else {
       if (args.asHtml) {
         const content = await page.content();
-        return content.length > maxLength
-          ? content.substring(0, maxLength) + "...[Truncated]"
-          : content;
+        const sliced = content.substring(offset, offset + maxLength);
+        return content.length > offset + maxLength
+          ? sliced +
+              `\n\n...[Content Truncated. Total length: ${content.length}. Use offset=${offset + maxLength} to read more]...`
+          : sliced;
       } else {
         // Smart content extraction to save tokens
-        const result = await page.evaluate((maxLen) => {
-          function cleanup(node: Node) {
-            // Remove comments
-            if (node.nodeType === 8) {
-              node.parentNode?.removeChild(node);
-              return;
-            }
-            // Remove unwanted tags
-            if (node.nodeType === 1) {
-              const el = node as Element;
-              const tagName = el.tagName.toLowerCase();
-              if (
-                [
-                  "script",
-                  "style",
-                  "svg",
-                  "noscript",
-                  "iframe",
-                  "object",
-                  "embed",
-                  "link",
-                ].includes(tagName)
-              ) {
-                el.parentNode?.removeChild(el);
+        const result = await page.evaluate(
+          ({ maxLen, startOffset }) => {
+            function cleanup(node: Node) {
+              // Remove comments
+              if (node.nodeType === 8) {
+                node.parentNode?.removeChild(node);
                 return;
               }
-              // Hide base64 images to save massive space
-              if (tagName === "img") {
-                const img = el as HTMLImageElement;
-                if (img.src.startsWith("data:")) {
-                  img.src = "";
-                  img.alt = "[Base64 Image Removed]";
+              // Remove unwanted tags
+              if (node.nodeType === 1) {
+                const el = node as Element;
+                const tagName = el.tagName.toLowerCase();
+                if (
+                  [
+                    "script",
+                    "style",
+                    "svg",
+                    "noscript",
+                    "iframe",
+                    "object",
+                    "embed",
+                    "link",
+                    "header",
+                    "footer",
+                    "nav",
+                    "aside",
+                  ].includes(tagName)
+                ) {
+                  el.parentNode?.removeChild(el);
+                  return;
+                }
+
+                // Hide base64 images to save massive space
+                if (tagName === "img") {
+                  const img = el as HTMLImageElement;
+                  if (img.src.startsWith("data:")) {
+                    img.src = "";
+                    img.alt = "[Base64 Image Removed]";
+                  }
                 }
               }
+
+              // Recurse
+              let child = node.firstChild;
+              while (child) {
+                const next = child.nextSibling;
+                cleanup(child);
+                child = next;
+              }
             }
-            // Recurse
-            let child = node.firstChild;
-            while (child) {
-              const next = child.nextSibling;
-              cleanup(child);
-              child = next;
-            }
-          }
 
-          // Clone body to not affect the actual page
-          const clone = document.body.cloneNode(true) as HTMLElement;
-          cleanup(clone);
+            // Clone body to not affect the actual page
+            const clone = document.body.cloneNode(true) as HTMLElement;
+            cleanup(clone);
 
-          let text = clone.innerText || "";
-          // Collapse multiple newlines
-          text = text.replace(/\n\s*\n/g, "\n\n");
+            let text = clone.innerText || "";
+            // Collapse multiple newlines and trim
+            text = text.replace(/\n\s*\n/g, "\n\n").trim();
 
-          if (text.length > maxLen) {
-            return (
-              text.substring(0, maxLen) +
-              `\n\n...[Content Truncated due to length limit of ${maxLen} chars]...`
+            const totalLength = text.length;
+            const slicedText = text.substring(
+              startOffset,
+              startOffset + maxLen,
             );
-          }
-          return text;
-        }, maxLength);
+
+            if (totalLength > startOffset + maxLen) {
+              return (
+                slicedText +
+                `\n\n...[Content Truncated. Total length: ${totalLength}. Use offset=${startOffset + maxLen} to read more]...`
+              );
+            }
+            return slicedText;
+          },
+          { maxLen: maxLength, startOffset: offset },
+        );
 
         return result;
       }

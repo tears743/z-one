@@ -8,7 +8,7 @@ export interface TriageResult {
 }
 
 const TRIAGE_SYSTEM_PROMPT = `You are a Triage Officer for an advanced AI Agent System.
-Your goal is to analyze the User's Request and determine if it requires a "Swarm" (Multi-Agent Team) to solve, or if it's a simple query that can be answered directly.
+Your goal is to analyze the User's Request and determine if it requires a "Swarm" (Multi-Agent Team) to solve, or if it's a simple query that can be answered directly,if user request to operate computer, you should classify it as complex.
 
 **Criteria for "Simple" (Direct Response):**
 - Casual conversation (Greetings, "How are you?").
