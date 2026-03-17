@@ -79,11 +79,10 @@ export async function addMemory(
     const config = resolveEmbeddingModel(settings);
     if (config.apiKey || config.provider === "ollama") {
       embedding = await generateEmbedding(content, config);
-      store.ensureVectorTable(embedding.length);
     } else {
-      logger.warn(
-        "[MemoryManager] Embedding model has no API key, using FTS-only mode",
-      );
+      // logger.debug(
+      //   "[MemoryManager] Embedding model has no API key, using FTS-only mode",
+      // );
     }
   } catch (e) {
     logger.warn(
@@ -119,14 +118,13 @@ export async function searchMemory(
   try {
     const config = resolveEmbeddingModel(settings);
     if (!config.apiKey || config.provider !== "ollama") {
-      logger.warn(
+      logger.debug(
         "[MemoryManager] Embedding model has no API key, using FTS-only search",
       );
       return store.searchByFts(query, options);
     }
 
     const embedding = await generateEmbedding(query, config);
-    store.ensureVectorTable(embedding.length);
     return store.searchSimilar(embedding, options);
   } catch (e) {
     logger.warn(

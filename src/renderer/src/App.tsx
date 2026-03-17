@@ -35,6 +35,7 @@ function App() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentSessionIdRef = useRef<string>("");
@@ -100,6 +101,7 @@ function App() {
         const sender = isFromSystem ? undefined : msg.payload.from;
 
         if (msg.payload.isChunk) {
+          setIsGenerating(true);
           updateLastMessage(
             "assistant",
             msg.payload.content,
@@ -162,8 +164,29 @@ function App() {
               ];
             }
           });
+          setIsGenerating(false);
         }
       }
+    });
+
+    // Listen for cancel acknowledgment
+    interactionClient.onRequestCancelled(() => {
+      setIsGenerating(false);
+      // Mark the last streaming message as cancelled
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === "assistant" && last.details?.isStreaming) {
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...last,
+              content: last.content + "\n\n*[Cancelled]*",
+              details: { ...last.details, isStreaming: false },
+            },
+          ];
+        }
+        return prev;
+      });
     });
 
     // Listen for Session Responses
@@ -406,6 +429,26 @@ function App() {
     }
   };
 
+  const handleCancelRequest = () => {
+    interactionClient.cancelRequest();
+    setIsGenerating(false);
+    // Immediately mark the streaming message as cancelled
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === "assistant" && last.details?.isStreaming) {
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...last,
+            content: last.content + "\n\n*[Cancelled]*",
+            details: { ...last.details, isStreaming: false },
+          },
+        ];
+      }
+      return prev;
+    });
+  };
+
   const handleWindowCommand = (
     cmd: "window:minimize" | "window:maximize" | "window:close",
   ) => {
@@ -523,7 +566,8 @@ function App() {
             saveSettings(newSettings, setSettings);
           }}
           onSend={handleSendMessage} // Use handleSendMessage as onSend
-          loading={false} // Manage loading state if needed
+          onCancel={handleCancelRequest}
+          loading={isGenerating}
           language={settings.general.language}
         />
       </div>

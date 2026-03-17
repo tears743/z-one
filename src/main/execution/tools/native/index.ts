@@ -1,19 +1,19 @@
 import { ReadFileTool, WriteFileTool, ListDirTool } from "./fs";
-import { BrowserTools } from "../browser";
+import { BrowserAITools } from "../browser-ai";
 import { MemoryTools } from "../memory";
-// import { ComputerTool } from "./computer";
-import { DesktopTools } from "../desktop";
+
 import { GetCurrentTimeTool } from "../time";
-import { TarsTools } from "../tars";
+
+import { RunCommandTool } from "../cli";
+import { SchedulerTools } from "../scheduler";
 
 export const nativeTools = [
   ReadFileTool,
   WriteFileTool,
   ListDirTool,
-  // ...BrowserTools,
+  ...BrowserAITools,
   ...MemoryTools,
-  // ComputerTool,
-  // ...DesktopTools,
   GetCurrentTimeTool,
-  ...TarsTools,
+  RunCommandTool,
+  ...SchedulerTools,
 ];

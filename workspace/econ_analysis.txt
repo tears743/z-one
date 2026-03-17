@@ -1,0 +1,155 @@
+================================================================================
+                    ECONOMIC INTELLIGENCE ANALYSIS
+                    US-IRAN GEOPOLITICAL TENSIONS
+                    Classification: Strategic Assessment
+================================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+The economic dimension of US-Iran tensions presents a complex interplay of 
+sanctions pressure, energy market volatility, and asymmetric economic warfare.
+Iran's economy faces severe structural constraints while maintaining sufficient
+resilience through grey-market trade and strategic partnerships.
+
+I. SANCTIONS IMPACT ASSESSMENT
+==============================
+
+A. Current Sanctions Architecture
+---------------------------------
+• Maximum Pressure Campaign (2018-2025): Comprehensive banking, energy, and
+  shipping sanctions reinstated after JCPOA withdrawal
+• SWIFT Exclusion: Iranian banks cut from global financial messaging network
+• Secondary Sanctions: Threatened against entities trading with Iran
+• Humanitarian Exemptions: Largely ineffective due to overcompliance
+
+B. Economic Impact Metrics
+--------------------------
+• GDP Contraction: ~15-20% cumulative since 2018 sanctions reimposition
+• Currency Devaluation: Iranian rial lost ~80% value against USD (2018-2025)
+• Inflation: Persistent hyperinflationary pressure (>40% annually)
+• Oil Exports: Collapsed from 2.5mbpd (2017) to ~400kbpd (covert)
+• Foreign Reserves: Depleted from $122B (2018) to estimated $20-40B accessible
+
+C. Sanctions Evasion Networks
+-----------------------------
+• "Ghost Fleet": ~200 tankers operating under flags of convenience
+• Grey-Market Oil Sales: Primary buyers include China, Syria, Venezuela
+• Barter Arrangements: Commodity-for-goods trade bypassing dollar system
+• Cryptocurrency Mining: State-sanctioned Bitcoin mining for sanctions bypass
+• Front Companies: Extensive network across UAE, Turkey, Malaysia
+
+II. OIL MARKET DYNAMICS
+=======================
+
+A. Strait of Hormuz Criticality
+-------------------------------
+• Daily Transit: ~21 million barrels/day (20% global consumption)
+• Alternative Routes: Limited capacity; Saudi East-West pipeline (~5mbpd max)
+• Insurance Premiums: War risk rates increased 300-500% since conflict onset
+• Shipping Disruption: ~30% reduction in tanker transits reported
+
+B. Price Volatility Projections
+-------------------------------
+Current Brent: ~$85-90/bbl (elevated risk premium)
+Scenario Projections:
+• Baseline ( containment ): $90-95/bbl
+• Moderate Escalation ( partial Hormuz closure ): $120-140/bbl  
+• Severe Escalation ( full Hormuz mining ): $180-220/bbl
+• Duration Sensitivity: Each month of disruption = +$10-15/bbl structural
+
+C. Producer Responses
+---------------------
+• Saudi Arabia: ~2mbpd spare capacity; politically constrained on Iran
+• UAE: ~1mbpd spare capacity; directly impacted by Iranian strikes
+• US Strategic Reserve: ~350mbbl available; release capacity ~4.4mbpd
+• IEA Collective Action: ~90 days emergency stocks available
+
+III. ECONOMIC PRESSURE POINTS
+=============================
+
+A. Iranian Vulnerabilities
+--------------------------
+1. Food Security
+   - Wheat import dependency: ~50% of consumption
+   - Currency collapse driving food price inflation >100%
+   - Social unrest risk correlates with bread price increases
+
+2. Pharmaceutical Shortages
+   - Chronic medicine shortages despite humanitarian exemptions
+   - Cancer/diabetes treatment access severely restricted
+   - Potential public health crisis multiplier effect
+
+3. Infrastructure Decay
+   - Aviation: ~40% of fleet grounded due to parts shortages
+   - Refining capacity: Operating at 60% due to maintenance gaps
+   - Power grid: Rolling blackouts in major cities
+
+B. US Economic Exposure
+-----------------------
+1. Inflation Transmission
+   - Oil price shock directly impacts US CPI (+0.1% per $10/bbl)
+   - Gasoline price spike politically sensitive (>$4/gallon threshold)
+
+2. Market Volatility
+   - Energy sector equity exposure ($2.5T market cap)
+   - Credit spreads widening for high-yield producers
+
+3. Allied Economic Strain
+   - EU energy transition costs exacerbated
+   - Asian manufacturing input cost inflation
+   - Emerging market current account deterioration
+
+IV. ASYMMETRIC ECONOMIC WARFARE
+================================
+
+A. Iranian Retaliatory Capabilities
+-----------------------------------
+1. Hormuz Disruption: Mining, missile attacks on tankers, coastal batteries
+2. Cyber Operations: Financial sector targeting, SWIFT infrastructure
+3. Proxy Economic Warfare: Attacks on Saudi/Emirati energy infrastructure
+4. Missile Threats: Range covers all regional oil export terminals
+
+B. US Economic Countermeasures
+------------------------------
+1. Additional Sectoral Sanctions: Petrochemicals, metals, construction
+2. Financial Isolation: Expanded secondary sanctions enforcement
+3. Maritime Interdiction: Enhanced Gulf patrols, tanker inspection
+4. Supply Chain Disruption: Targeting sanctions evasion networks
+
+V. FUTURE ECONOMIC ESCALATION RISKS
+===================================
+
+Risk Matrix:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ TRIGGERS                    │ PROBABILITY │ IMPACT  │ TIMEFRAME          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Full Hormuz Closure         │    25%      │ Critical│ Immediate (days)   │
+│ Iranian Oil Export Collapse │    40%      │ High    │ Ongoing            │
+│ Regional Infrastructure War │    35%      │ High    │ Weeks              │
+│ Cyber-Financial System Attack│   20%      │ High    │ Immediate          │
+│ Humanitarian Crisis Spillover│  30%      │ Medium  │ Months             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+VI. STRATEGIC ECONOMIC ASSESSMENT
+=================================
+
+The economic dimension presents asymmetric vulnerabilities for both parties.
+Iran's economy operates under severe constraints but has demonstrated 
+remarkable adaptive capacity through sanctions evasion. The critical 
+vulnerability for global markets is the Strait of Hormuz, where even limited
+disruption generates outsized economic impact through oil price volatility.
+
+The US holds escalation dominance in economic warfare but faces inflationary
+and political constraints on maximum pressure implementation. Iran possesses
+an effective economic deterrent through Hormuz closure capability, creating
+mutually assured economic disruption.
+
+Economic de-escalation pathways require sanctions relief sequencing tied to
+verifiable nuclear constraints, while military de-escalation must address
+the Hormuz security dilemma.
+
+================================================================================
+Report Compiled: March 2025
+Analyst: Economic Intelligence Officer
+Classification: Strategic Planning
+================================================================================

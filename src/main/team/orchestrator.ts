@@ -5,7 +5,7 @@ import {
   TEAM_LEADER_SYSTEM_PROMPT,
   generateTeamRequestPrompt,
 } from "./prompts";
-import { TeamPlan, TeamTask } from "./types";
+import { TeamPlan, TeamTask, SwarmStage } from "./types";
 import { logger } from "../logger";
 import { Agent } from "../agent/agent";
 import * as fs from "fs/promises";
@@ -36,6 +36,7 @@ export class TeamOrchestrator {
     onSwarmEvent?: (event: any) => void,
     sessionId: string = "global",
     logCallback?: (content: string) => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<string> {
     // 1. Tool Discovery
     const tools = await this.toolRegistry.getAllTools();
@@ -47,6 +48,56 @@ export class TeamOrchestrator {
     if (onStatus) onStatus("Thinking (Staffing & Planning)...");
 
     const prompt = generateTeamRequestPrompt(goal, context, toolsDesc);
+
+    const teamPlanSchema = {
+      name: "team_plan",
+      schema: {
+        type: "object",
+        properties: {
+          isComplex: { type: "boolean" },
+          thoughts: { type: "string" },
+          roster: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                persona: { type: "string" },
+                capabilities: { type: "array", items: { type: "string" } },
+                tools: { type: "array", items: { type: "string" } },
+              },
+              required: ["name", "persona", "capabilities", "tools"],
+            },
+          },
+          mission: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                tasks: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      description: { type: "string" },
+                      assignedTo: { type: "string" },
+                      dependencies: { type: "array", items: { type: "string" } },
+                    },
+                    required: ["id", "description", "assignedTo", "dependencies"],
+                  },
+                },
+              },
+              required: ["name", "tasks"],
+            },
+          },
+        },
+        required: ["thoughts", "roster", "mission"],
+        additionalProperties: false,
+      },
+    };
+
     const response = await this.llmService.generateCompletion(
       [
         { role: "system", content: TEAM_LEADER_SYSTEM_PROMPT },
@@ -54,6 +105,10 @@ export class TeamOrchestrator {
       ],
       modelConfig,
       true, // jsonMode
+      undefined, // onChunk
+      undefined, // tools
+      signal,
+      teamPlanSchema,
     );
 
     if (!response) throw new Error("Team Leader failed to respond");
@@ -67,6 +122,10 @@ export class TeamOrchestrator {
       logger.error("Failed to parse team plan", e);
       throw new Error("Invalid team plan format");
     }
+
+    // Validate and fix stage structure: if dependent tasks are in the same stage,
+    // automatically split them into sequential stages to prevent race conditions.
+    plan.mission = this.validateAndFixStages(plan.mission);
 
     logger.info("Team Plan:", plan);
     if (onStatus) onStatus(`Strategy: ${plan.thoughts.substring(0, 150)}...`);
@@ -146,9 +205,20 @@ export class TeamOrchestrator {
     }
 
     for (const stage of plan.mission) {
+      // Check abort before each stage
+      if (signal?.aborted) {
+        logger.info(`[TeamOrchestrator] Execution aborted before stage: ${stage.name}`);
+        break;
+      }
       if (onStatus) onStatus(`Starting Stage: ${stage.name}`);
 
       const stagePromises = stage.tasks.map(async (task) => {
+        // Check abort before each task
+        if (signal?.aborted) {
+          (task as any).status = "cancelled";
+          return `[${task.assignedTo}] Task cancelled: ${task.description}`;
+        }
+
         const agent = this.teammates.get(task.assignedTo);
         if (!agent) {
           const error = `Agent ${task.assignedTo} MIA. Skipping task: ${task.description}`;
@@ -187,6 +257,7 @@ export class TeamOrchestrator {
           const result = await agent.process(
             taskInput,
             (chunk) => {
+              if (signal?.aborted) return;
               // Buffer chunks and split by newline for cleaner logs
               (task as any)._logBuffer += chunk;
 
@@ -216,6 +287,7 @@ export class TeamOrchestrator {
                 }
               }
             },
+            signal,
           );
 
           // Flush remaining buffer
@@ -329,5 +401,103 @@ ${error ? `## Error\n${error}` : ""}
     } catch (e) {
       logger.error(`Failed to write task progress file ${fileName}`, e);
     }
+  }
+
+  /**
+   * Validates and fixes stage structure to ensure dependent tasks are not
+   * in the same parallel stage. Uses topological sort on task dependencies
+   * to auto-split into correct sequential stages.
+   */
+  private validateAndFixStages(mission: SwarmStage[]): SwarmStage[] {
+    // Collect all tasks across all stages
+    const allTasks: TeamTask[] = [];
+    for (const stage of mission) {
+      allTasks.push(...stage.tasks);
+    }
+
+    if (allTasks.length <= 1) return mission;
+
+    // Build a set of all task IDs for quick lookup
+    const taskIdSet = new Set(allTasks.map((t) => t.id));
+
+    // Check if any stage has tasks with intra-stage dependencies
+    let needsFix = false;
+    for (const stage of mission) {
+      const stageTaskIds = new Set(stage.tasks.map((t) => t.id));
+      for (const task of stage.tasks) {
+        for (const dep of task.dependencies) {
+          if (stageTaskIds.has(dep)) {
+            // A task depends on another task in the SAME stage — invalid for parallel execution
+            needsFix = true;
+            logger.warn(
+              `[TeamOrchestrator] Task "${task.id}" depends on "${dep}" but both are in stage "${stage.name}". Auto-fixing...`,
+            );
+            break;
+          }
+        }
+        if (needsFix) break;
+      }
+      if (needsFix) break;
+    }
+
+    if (!needsFix) return mission;
+
+    // Topological sort: assign each task a "level" based on its dependency depth
+    const taskMap = new Map<string, TeamTask>();
+    for (const task of allTasks) {
+      taskMap.set(task.id, task);
+    }
+
+    const levels = new Map<string, number>();
+
+    const getLevel = (taskId: string, visited: Set<string> = new Set()): number => {
+      if (levels.has(taskId)) return levels.get(taskId)!;
+      if (visited.has(taskId)) return 0; // Circular dependency guard
+      visited.add(taskId);
+
+      const task = taskMap.get(taskId);
+      if (!task || task.dependencies.length === 0) {
+        levels.set(taskId, 0);
+        return 0;
+      }
+
+      let maxDepLevel = 0;
+      for (const dep of task.dependencies) {
+        if (taskIdSet.has(dep)) {
+          maxDepLevel = Math.max(maxDepLevel, getLevel(dep, visited) + 1);
+        }
+      }
+
+      levels.set(taskId, maxDepLevel);
+      return maxDepLevel;
+    };
+
+    // Calculate level for every task
+    for (const task of allTasks) {
+      getLevel(task.id);
+    }
+
+    // Group tasks by level
+    const levelGroups = new Map<number, TeamTask[]>();
+    for (const task of allTasks) {
+      const level = levels.get(task.id) || 0;
+      if (!levelGroups.has(level)) {
+        levelGroups.set(level, []);
+      }
+      levelGroups.get(level)!.push(task);
+    }
+
+    // Build new stages from level groups, sorted by level
+    const sortedLevels = [...levelGroups.keys()].sort((a, b) => a - b);
+    const newMission: SwarmStage[] = sortedLevels.map((level, index) => ({
+      name: `Stage ${index + 1}`,
+      tasks: levelGroups.get(level)!,
+    }));
+
+    logger.info(
+      `[TeamOrchestrator] Auto-fixed stages: ${mission.length} stage(s) → ${newMission.length} stage(s)`,
+    );
+
+    return newMission;
   }
 }

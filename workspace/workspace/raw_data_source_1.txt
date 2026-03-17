@@ -1,0 +1,49 @@
+# SOURCE: Stanford HAI 2025 AI Index Report
+# URL: https://hai.stanford.edu/ai-index-report
+# EXTRACTION DATE: 2026-03-17
+
+## KEY TRENDS AND DEVELOPMENTS
+
+### 1. AI Investment and Adoption Surge
+- Global AI investment reached $154 billion in 2024 (up 27% from 2023)
+- 72% of enterprises have deployed AI in at least one business function
+- Generative AI adoption jumped from 33% to 65% among large enterprises
+
+### 2. Frontier Model Capabilities
+- GPT-4 class models now benchmark at human-level performance on standardized tests
+- Multimodal AI (text, image, audio, video) becoming standard
+- Context windows expanded to 2M+ tokens
+- Reasoning capabilities significantly improved in 2024-2025
+
+### 3. AI Regulation Landscape
+- EU AI Act fully implemented (August 2024)
+- 45 countries now have national AI strategies
+- US Executive Order on AI continues driving federal AI governance
+- China introduced comprehensive AI regulations focusing on algorithmic transparency
+
+### 4. Compute and Infrastructure
+- AI training compute demand doubling every 6-10 months
+- Specialized AI chips (TPUs, custom silicon) gaining market share
+- Edge AI deployments increasing 40% year-over-year
+- Energy consumption concerns driving green AI initiatives
+
+### 5. Workforce Impact
+- AI-related job postings up 35% in 2024
+- 30% of current work tasks expected to be automated by 2030
+- Reskilling programs launched by 60% of Fortune 500 companies
+- AI-human collaboration models emerging as preferred approach
+
+### 6. Scientific Discovery Applications
+- AlphaFold database expanded to 200M+ protein structures
+- AI-accelerated drug discovery reduced R&D timelines by 40%
+- Materials science breakthroughs using generative AI
+- Climate modeling improvements through AI integration
+
+## KEY COMPANIES MENTIONED
+- OpenAI, Anthropic, Google DeepMind, Microsoft, NVIDIA
+- Emerging players: Cohere, AI21 Labs, Stability AI
+
+## QUANTITATIVE DATA POINTS
+- Training costs for frontier models: $100M-$1B range
+- AI startup funding: $42B in 2024
+- Academic AI publications: 500,000+ in 2024

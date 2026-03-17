@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Image as ImageIcon, ChevronDown, X } from "lucide-react";
+import { Send, Image as ImageIcon, ChevronDown, X, Square } from "lucide-react";
 import { ModelConfig } from "../types/settings";
 import { t } from "../utils/translations";
 
@@ -8,6 +8,7 @@ interface ChatInputProps {
   activeModelId: string;
   onModelChange: (modelId: string) => void;
   onSend: (text: string, images: string[]) => void;
+  onCancel?: () => void;
   loading: boolean;
   language: "en" | "zh";
   disabled?: boolean;
@@ -19,6 +20,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   activeModelId,
   onModelChange,
   onSend,
+  onCancel,
   loading,
   language,
   disabled,
@@ -39,7 +41,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, [text]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Ctrl/Cmd + Enter = send, plain Enter = newline
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSend();
     }
@@ -179,13 +182,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           }
           rows={1}
           className="chat-textarea"
-          disabled={loading || disabled}
+          disabled={disabled}
         />
-        <div className="input-actions" style={{ justifyContent: "flex-end" }}>
+        <div className="input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
+          {loading && onCancel && (
+            <button
+              onClick={onCancel}
+              className="send-btn"
+              style={{
+                backgroundColor: "#ef4444",
+                borderColor: "#ef4444",
+              }}
+              title={trans.cancel || "Cancel"}
+            >
+              <Square size={16} fill="currentColor" />
+            </button>
+          )}
           <button
             onClick={handleSend}
             disabled={
-              loading || disabled || (!text.trim() && images.length === 0)
+              disabled || (!text.trim() && images.length === 0)
             }
             className="send-btn"
           >

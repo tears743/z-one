@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { X, Plus, Trash2, Save, Check } from "lucide-react";
-import { AppSettings, ModelConfig, ModelProvider } from "../types/settings";
+import { AppSettings, ModelConfig, ModelProvider, DeviceConfig, DeviceType } from "../types/settings";
 import { t, translations } from "../utils/translations";
 
 interface SettingsModalProps {
@@ -17,12 +17,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onSave,
 }) => {
-  const [activeTab, setActiveTab] = useState<"general" | "agent" | "models">(
+  const [activeTab, setActiveTab] = useState<"general" | "agent" | "models" | "devices" | "scheduledTasks">(
     "general",
   );
   const [localSettings, setLocalSettings] = useState<AppSettings>(settings);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const trans = t(localSettings.general.language);
+  const [scheduledTasks, setScheduledTasks] = useState<any[]>([]);
+
+  // Load scheduled tasks when tab is active
+  useEffect(() => {
+    if (activeTab === "scheduledTasks" && isOpen) {
+      window.electron?.ipcRenderer.invoke("cron:list").then((tasks: any[]) => {
+        setScheduledTasks(tasks || []);
+      });
+    }
+  }, [activeTab, isOpen]);
 
   // Reset local state when opening
   useEffect(() => {
@@ -104,7 +114,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       name: "New Model",
       modelId: "",
       enabled: true,
-      isCustom: true,
+      isCustom: false,
       modelType: "llm",
     };
     setLocalSettings((prev) => ({
@@ -169,6 +179,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               label={trans.models}
               active={activeTab === "models"}
               onClick={() => setActiveTab("models")}
+            />
+            <SidebarItem
+              label={trans.devices}
+              active={activeTab === "devices"}
+              onClick={() => setActiveTab("devices")}
+            />
+            <SidebarItem
+              label={trans.scheduledTasks}
+              active={activeTab === "scheduledTasks"}
+              onClick={() => setActiveTab("scheduledTasks")}
             />
           </div>
 
@@ -589,6 +609,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             >
                               <option value="openai">openai</option>
                               <option value="ollama">ollama</option>
+                              <option value="lm_studio">LM Studio</option>
                               <option value="anthropic">anthropic</option>
                               <option value="gemini">gemini</option>
                               <option value="deepseek">deepseek</option>
@@ -794,12 +815,418 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               />
                               {trans.enableThinking}
                             </label>
+
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                cursor: "pointer",
+                                color: "var(--text-secondary)",
+                                fontSize: "0.9rem",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!model.isCustom}
+                                onChange={(e) =>
+                                  updateModel(model.id, {
+                                    isCustom: e.target.checked,
+                                  })
+                                }
+                              />
+                              Is Custom (Local)
+                            </label>
                           </div>
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {activeTab === "devices" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}
+              >
+                <Section title={trans.devices}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      const newDevice: DeviceConfig = {
+                        id: `device-${Date.now()}`,
+                        type: "lark",
+                        name: "",
+                        enabled: true,
+                      };
+                      setLocalSettings((prev) => ({
+                        ...prev,
+                        devices: [...(prev.devices || []), newDevice],
+                      }));
+                    }}
+                    style={{ marginBottom: "10px", alignSelf: "flex-start" }}
+                  >
+                    <Plus size={14} style={{ marginRight: "5px" }} />
+                    {trans.addDevice}
+                  </button>
+
+                  {(!localSettings.devices || localSettings.devices.length === 0) && (
+                    <p style={{ color: "var(--text-secondary)", fontStyle: "italic" }}>
+                      {trans.noDevices}
+                    </p>
+                  )}
+
+                  {(localSettings.devices || []).map((device, idx) => (
+                    <div
+                      key={device.id}
+                      style={{
+                        border: "1px solid var(--border-color)",
+                        borderRadius: "8px",
+                        padding: "16px",
+                        marginBottom: "12px",
+                        backgroundColor: "var(--bg-primary)",
+                      }}
+                    >
+                      {/* Device header */}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: "12px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span
+                            style={{
+                              fontSize: "1.2em",
+                            }}
+                          >
+                            {device.type === "lark" ? "\uD83D\uDC26" : "\u2699\uFE0F"}
+                          </span>
+                          <span style={{ fontWeight: "bold", color: "var(--text-primary)" }}>
+                            {device.name || (device.type === "lark" ? trans.lark : trans.hardware)}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              fontSize: "0.85em",
+                              color: "var(--text-secondary)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={device.enabled}
+                              onChange={(e) => {
+                                const devices = [...(localSettings.devices || [])];
+                                devices[idx] = { ...devices[idx], enabled: e.target.checked };
+                                setLocalSettings((prev) => ({ ...prev, devices }));
+                              }}
+                            />
+                            {trans.enabled}
+                          </label>
+                          <button
+                            className="icon-btn"
+                            onClick={() => {
+                              const devices = (localSettings.devices || []).filter((_, i) => i !== idx);
+                              setLocalSettings((prev) => ({ ...prev, devices }));
+                            }}
+                            style={{ color: "var(--error-color, #f44336)" }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Common fields */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "10px",
+                        }}
+                      >
+                        <Field label={trans.deviceName}>
+                          <input
+                            className="form-input"
+                            value={device.name}
+                            placeholder={device.type === "lark" ? trans.lark : trans.hardware}
+                            onChange={(e) => {
+                              const devices = [...(localSettings.devices || [])];
+                              devices[idx] = { ...devices[idx], name: e.target.value };
+                              setLocalSettings((prev) => ({ ...prev, devices }));
+                            }}
+                          />
+                        </Field>
+                        <Field label={trans.deviceType}>
+                          <select
+                            className="form-input"
+                            value={device.type}
+                            onChange={(e) => {
+                              const devices = [...(localSettings.devices || [])];
+                              devices[idx] = { ...devices[idx], type: e.target.value as DeviceType };
+                              setLocalSettings((prev) => ({ ...prev, devices }));
+                            }}
+                          >
+                            <option value="lark">{trans.lark}</option>
+                            <option value="hardware">{trans.hardware}</option>
+                          </select>
+                        </Field>
+                      </div>
+
+                      {/* Lark-specific fields */}
+                      {device.type === "lark" && (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: "10px",
+                            marginTop: "10px",
+                          }}
+                        >
+                          <Field label={trans.appId}>
+                            <input
+                              className="form-input"
+                              value={device.appId || ""}
+                              placeholder="cli_xxxxxxxx"
+                              onChange={(e) => {
+                                const devices = [...(localSettings.devices || [])];
+                                devices[idx] = { ...devices[idx], appId: e.target.value };
+                                setLocalSettings((prev) => ({ ...prev, devices }));
+                              }}
+                            />
+                          </Field>
+                          <Field label={trans.appSecret}>
+                            <input
+                              className="form-input"
+                              type="password"
+                              value={device.appSecret || ""}
+                              placeholder="App Secret"
+                              onChange={(e) => {
+                                const devices = [...(localSettings.devices || [])];
+                                devices[idx] = { ...devices[idx], appSecret: e.target.value };
+                                setLocalSettings((prev) => ({ ...prev, devices }));
+                              }}
+                            />
+                          </Field>
+                        </div>
+                      )}
+
+                      {/* Hardware-specific fields */}
+                      {device.type === "hardware" && (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: "10px",
+                            marginTop: "10px",
+                          }}
+                        >
+                          <Field label={trans.connectionType}>
+                            <select
+                              className="form-input"
+                              value={device.connectionType || "serial"}
+                              onChange={(e) => {
+                                const devices = [...(localSettings.devices || [])];
+                                devices[idx] = {
+                                  ...devices[idx],
+                                  connectionType: e.target.value as "serial" | "bluetooth" | "tcp",
+                                };
+                                setLocalSettings((prev) => ({ ...prev, devices }));
+                              }}
+                            >
+                              <option value="serial">{trans.serial}</option>
+                              <option value="bluetooth">{trans.bluetooth}</option>
+                              <option value="tcp">{trans.tcp}</option>
+                            </select>
+                          </Field>
+                          <Field label={trans.address}>
+                            <input
+                              className="form-input"
+                              value={device.address || ""}
+                              placeholder={
+                                device.connectionType === "tcp"
+                                  ? "192.168.1.100:8080"
+                                  : device.connectionType === "bluetooth"
+                                    ? "AA:BB:CC:DD:EE:FF"
+                                    : "/dev/tty.usbserial-xxx"
+                              }
+                              onChange={(e) => {
+                                const devices = [...(localSettings.devices || [])];
+                                devices[idx] = { ...devices[idx], address: e.target.value };
+                                setLocalSettings((prev) => ({ ...prev, devices }));
+                              }}
+                            />
+                          </Field>
+                          {(device.connectionType === "serial" || !device.connectionType) && (
+                            <Field label={trans.baudRate}>
+                              <input
+                                className="form-input"
+                                type="number"
+                                value={device.baudRate || 115200}
+                                onChange={(e) => {
+                                  const devices = [...(localSettings.devices || [])];
+                                  devices[idx] = {
+                                    ...devices[idx],
+                                    baudRate: parseInt(e.target.value) || 115200,
+                                  };
+                                  setLocalSettings((prev) => ({ ...prev, devices }));
+                                }}
+                              />
+                            </Field>
+                          )}
+                          <Field label={trans.protocol}>
+                            <input
+                              className="form-input"
+                              value={device.protocol || ""}
+                              placeholder="custom"
+                              onChange={(e) => {
+                                const devices = [...(localSettings.devices || [])];
+                                devices[idx] = { ...devices[idx], protocol: e.target.value };
+                                setLocalSettings((prev) => ({ ...prev, devices }));
+                              }}
+                            />
+                          </Field>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </Section>
+              </div>
+            )}
+
+            {activeTab === "scheduledTasks" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}
+              >
+                <Section title={trans.scheduledTasks}>
+                  {scheduledTasks.length === 0 && (
+                    <p style={{ color: "var(--text-secondary)", fontStyle: "italic" }}>
+                      {trans.noScheduledTasks}
+                    </p>
+                  )}
+
+                  {scheduledTasks.map((task: any) => (
+                    <div
+                      key={task.id}
+                      style={{
+                        border: "1px solid var(--border-color)",
+                        borderRadius: "8px",
+                        padding: "16px",
+                        marginBottom: "12px",
+                        backgroundColor: "var(--bg-primary)",
+                        opacity: task.enabled ? 1 : 0.6,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: "8px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{ fontWeight: "bold", color: "var(--text-primary)" }}>
+                            {task.type === "cron" ? "\uD83D\uDD04" : "\u23F0"} {task.name}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "0.75em",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                              backgroundColor: task.type === "cron" ? "var(--primary-color, #4a9eff)" : "#ff9800",
+                              color: "#fff",
+                            }}
+                          >
+                            {task.type === "cron" ? trans.cronTask : trans.onceTask}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              fontSize: "0.85em",
+                              color: "var(--text-secondary)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={task.enabled}
+                              onChange={async () => {
+                                await window.electron?.ipcRenderer.invoke("cron:toggle", {
+                                  id: task.id,
+                                  enabled: !task.enabled,
+                                });
+                                const tasks = await window.electron?.ipcRenderer.invoke("cron:list");
+                                setScheduledTasks(tasks || []);
+                              }}
+                            />
+                            {trans.enabled}
+                          </label>
+                          <button
+                            className="icon-btn"
+                            onClick={async () => {
+                              await window.electron?.ipcRenderer.invoke("cron:delete", { id: task.id });
+                              const tasks = await window.electron?.ipcRenderer.invoke("cron:list");
+                              setScheduledTasks(tasks || []);
+                            }}
+                            style={{ color: "var(--error-color, #f44336)" }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "6px 16px",
+                          fontSize: "0.85em",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        <div>
+                          <strong>{trans.schedule}:</strong>{" "}
+                          {task.cronExpression || (task.runAt ? new Date(task.runAt).toLocaleString() : "-")}
+                        </div>
+                        <div>
+                          <strong>{trans.lastRun}:</strong>{" "}
+                          {task.lastRun ? new Date(task.lastRun).toLocaleString() : trans.neverRun}
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <strong>{trans.taskDescription}:</strong>{" "}
+                          <span style={{ color: "var(--text-primary)" }}>
+                            {task.taskDescription.length > 100
+                              ? task.taskDescription.slice(0, 100) + "..."
+                              : task.taskDescription}
+                          </span>
+                        </div>
+                        <div>
+                          <strong>{trans.targetDevice}:</strong> {task.deviceId}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </Section>
               </div>
             )}
           </div>

@@ -26,6 +26,8 @@ import {
   setSettingsGetter,
 } from "./memory/manager";
 import { interactionManager } from "./interaction/manager";
+import { deviceManager } from "./device";
+import { cronScheduler } from "./scheduler";
 // import icon from '../../resources/icon.png?asset'
 
 function createWindow(): void {
@@ -116,6 +118,16 @@ app.whenReady().then(async () => {
 
   // Initialize Interaction Manager
   interactionManager.start();
+
+  // Start device bridges (Lark, hardware, etc.)
+  deviceManager.startAll().catch((err) => {
+    console.error("Failed to start devices:", err);
+  });
+
+  // Initialize Cron Scheduler
+  cronScheduler.init((deviceId, taskDescription) => {
+    interactionManager.injectMessage(deviceId, taskDescription);
+  });
 
   // Initialize MCP Hub
   const mcpHub = new McpHub();
@@ -219,12 +231,27 @@ app.whenReady().then(async () => {
   ipcMain.removeHandler("db:delete-model");
 
   ipcMain.handle("db:get-app-settings", () => getAppSettings());
-  ipcMain.handle("db:save-app-settings", (_, settings) =>
-    saveAppSettings(settings),
-  );
+  ipcMain.handle("db:save-app-settings", async (_, settings) => {
+    saveAppSettings(settings);
+    // Restart device bridges when settings change
+    await deviceManager.restartAll();
+  });
   ipcMain.handle("db:get-models", () => getModels());
   ipcMain.handle("db:save-model", (_, model) => saveModel(model));
   ipcMain.handle("db:delete-model", (_, id) => deleteModel(id));
+
+  // Scheduled Tasks Handlers
+  ipcMain.removeHandler("cron:list");
+  ipcMain.removeHandler("cron:toggle");
+  ipcMain.removeHandler("cron:delete");
+
+  ipcMain.handle("cron:list", () => cronScheduler.listTasks());
+  ipcMain.handle("cron:toggle", (_, { id, enabled }) => {
+    cronScheduler.toggle(id, enabled);
+  });
+  ipcMain.handle("cron:delete", (_, { id }) => {
+    cronScheduler.removeTask(id);
+  });
 
   // Memory Handlers
   ipcMain.handle("memory:add", async (_, { content, layer, sessionId }) => {
@@ -357,5 +384,17 @@ app.on("activate", function () {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+// Clean up Stagehand browser on app quit to prevent orphan Chromium processes
+app.on("before-quit", async () => {
+  try {
+    const { stagehandManager } = await import(
+      "./execution/tools/browser-ai/index"
+    );
+    await stagehandManager.close();
+  } catch {
+    // Best-effort cleanup
   }
 });

@@ -12,6 +12,7 @@ import { getDevice, saveDevice, getModels, getAppSettings } from "../db";
 import { logger } from "../logger";
 
 import { Planner } from "../intelligence/planner";
+import { MessageQueue } from "./message-queue";
 
 export class InteractionManager {
   private wss: WebSocketServer | null = null;
@@ -20,6 +21,7 @@ export class InteractionManager {
   private port: number = 18888;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private planner: Planner | null = null;
+  private messageQueue: MessageQueue | null = null;
 
   constructor() {
     this.internalToken = randomUUID();
@@ -28,6 +30,7 @@ export class InteractionManager {
 
   public setPlanner(planner: Planner) {
     this.planner = planner;
+    this.messageQueue = new MessageQueue(planner);
   }
 
   // Lifecycle Hooks
@@ -179,6 +182,9 @@ export class InteractionManager {
         break;
       case "heartbeat":
         // Keep alive
+        break;
+      case "cancel_request":
+        this.handleCancelRequest(ws);
         break;
     }
   }
@@ -389,6 +395,28 @@ export class InteractionManager {
     }
   }
 
+  private handleCancelRequest(ws: WebSocket) {
+    const info = this.connections.get(ws);
+    if (!info || info.status !== "active") return;
+
+    if (this.messageQueue && this.messageQueue.cancelCurrent(info.deviceId)) {
+      logger.info(
+        `[InteractionManager] Cancelled active request for device ${info.deviceId}`,
+      );
+
+      // Acknowledge cancellation
+      this.sendTo(ws, {
+        type: "request_cancelled",
+        payload: { deviceId: info.deviceId },
+        timestamp: Date.now(),
+      });
+    } else {
+      logger.info(
+        `[InteractionManager] No active request to cancel for device ${info.deviceId}`,
+      );
+    }
+  }
+
   private async handleSessionRequest(ws: WebSocket, payload: any) {
     const info = this.connections.get(ws);
     if (!info || info.status !== "active") return;
@@ -466,119 +494,103 @@ export class InteractionManager {
 
     logger.debug(
       `[InteractionManager] Processing text message from ${info.deviceId}`,
-      {
-        timestamp: message.timestamp,
-      },
+      { timestamp: message.timestamp },
     );
 
-    // Route to Planner/InputAgent
-    if (this.planner) {
+    if (this.planner && this.messageQueue) {
+      const payload = message.payload as any;
+      const sessionId = payload.sessionId;
+
+      // Hydrate model config from DB
+      let modelConfig: any = {};
       try {
-        const payload = message.payload as any;
-        const content =
-          typeof payload.content === "string"
-            ? payload.content
-            : JSON.stringify(payload.content); // Only stringify content part
-
-        const sessionId = payload.sessionId; // Extract session ID
-
-        // Hydrate model config strictly from DB
+        const allModels = getModels();
+        let targetModel;
         const clientModelConfig = payload.modelConfig || {};
-        let modelConfig: any = {};
 
-        try {
-          const allModels = getModels();
-          let targetModel;
-
-          if (clientModelConfig.id) {
-            targetModel = allModels.find(
-              (m: any) => m.id === clientModelConfig.id,
-            );
-          } else {
-            // Fallback to active model in settings
-            const settings = getAppSettings();
-            if (settings && settings.activeModelId) {
-              targetModel = allModels.find(
-                (m: any) => m.id === settings.activeModelId,
-              );
-            }
+        if (clientModelConfig.id) {
+          targetModel = allModels.find((m: any) => m.id === clientModelConfig.id);
+        } else {
+          const settings = getAppSettings();
+          if (settings && settings.activeModelId) {
+            targetModel = allModels.find((m: any) => m.id === settings.activeModelId);
           }
-
-          if (targetModel) {
-            modelConfig = { ...targetModel };
-            // Optional: allow client to override non-sensitive params like temperature if needed?
-            // For now, strict mode: only DB config.
-
-            // Ensure stream is true for interactive chat if undefined
-            if (modelConfig.stream === undefined) {
-              modelConfig.stream = true;
-            }
-          } else {
-            logger.warn("No valid model configuration found for request");
-          }
-        } catch (err) {
-          logger.error("Failed to hydrate model config from DB", err);
         }
 
-        // Let Planner process the input via Input Agent -> Control -> Output Agent
-        const response = await this.planner.processInput(
-          info.deviceId,
-          content,
-          modelConfig,
-          (chunk: any) => {
-            // Streaming callback
-            if (typeof chunk === "object" && chunk.stages) {
-              // It's a Swarm State update (TeamPlan snapshot)
-              this.sendTo(ws, {
-                type: "message",
-                payload: {
-                  from: "system",
-                  to: info.deviceId,
-                  isChunk: true,
-                  details: {
-                    swarmState: chunk,
-                  },
-                },
-                timestamp: Date.now(),
-              });
-            } else if (typeof chunk === "string") {
-              // Normal text chunk
-              this.sendTo(ws, {
-                type: "message",
-                payload: {
-                  content: chunk,
-                  from: "system",
-                  to: info.deviceId,
-                  isChunk: true, // Flag to indicate partial content
-                },
-                timestamp: Date.now(),
-              });
-            }
-          },
-          sessionId, // Pass session ID
-        );
-
-        // Send the response back to the device via Interaction Layer (Output Channel)
-        this.sendTo(ws, {
-          type: "message",
-          payload: {
-            content: response,
-            from: "system",
-            to: info.deviceId, // Targeted output
-          },
-          timestamp: Date.now(),
-        });
-      } catch (e: any) {
-        logger.error(`Error processing message from ${info.deviceId}`, e);
-        this.sendTo(ws, {
-          type: "message",
-          payload: {
-            content: `Error: ${e.message}`,
-            from: "system",
-          },
-          timestamp: Date.now(),
-        });
+        if (targetModel) {
+          modelConfig = { ...targetModel };
+          if (modelConfig.stream === undefined) {
+            modelConfig.stream = true;
+          }
+        } else {
+          logger.warn("No valid model configuration found for request");
+        }
+      } catch (err) {
+        logger.error("Failed to hydrate model config from DB", err);
       }
+
+      // Enqueue the message — the queue handles supervisor triage and processing
+      const abortController = new AbortController();
+
+      this.messageQueue.enqueue({
+        id: randomUUID(),
+        deviceId: info.deviceId,
+        ws,
+        message,
+        abortController,
+        status: "pending",
+        modelConfig,
+        sessionId,
+        onStream: (chunk: any) => {
+          if (abortController.signal.aborted) return;
+
+          if (typeof chunk === "object" && chunk.stages) {
+            this.sendTo(ws, {
+              type: "message",
+              payload: {
+                from: "system",
+                to: info.deviceId,
+                isChunk: true,
+                details: { swarmState: chunk },
+              },
+              timestamp: Date.now(),
+            });
+          } else if (typeof chunk === "string") {
+            this.sendTo(ws, {
+              type: "message",
+              payload: {
+                content: chunk,
+                from: "system",
+                to: info.deviceId,
+                isChunk: true,
+              },
+              timestamp: Date.now(),
+            });
+          }
+        },
+        onComplete: (response: string) => {
+          this.sendTo(ws, {
+            type: "message",
+            payload: {
+              content: response,
+              from: "system",
+              to: info.deviceId,
+            },
+            timestamp: Date.now(),
+          });
+        },
+        onError: (error: Error) => {
+          logger.error(`Error processing message from ${info.deviceId}`, error);
+          this.sendTo(ws, {
+            type: "message",
+            payload: {
+              content: `Error: ${error.message}`,
+              from: "system",
+            },
+            timestamp: Date.now(),
+          });
+        },
+      });
     } else {
       // Fallback: Broadcast if no planner attached (Legacy mode)
       this.broadcast(message, ws);
@@ -606,6 +618,59 @@ export class InteractionManager {
       }
     }
     return false;
+  }
+
+  /**
+   * Inject a message as if it came from a device.
+   * Used by CronScheduler to trigger task execution.
+   */
+  public injectMessage(deviceId: string, content: string) {
+    // Find the device's WS connection
+    let targetWs: WebSocket | null = null;
+    let targetInfo: ConnectionInfo | null = null;
+
+    for (const [ws, info] of this.connections.entries()) {
+      if (info.deviceId === deviceId && info.status === "active") {
+        targetWs = ws;
+        targetInfo = info;
+        break;
+      }
+    }
+
+    // Fallback to internal web page if target device not connected
+    if (!targetWs || !targetInfo) {
+      for (const [ws, info] of this.connections.entries()) {
+        if (info.deviceId === "_zone_web_page" && info.status === "active") {
+          targetWs = ws;
+          targetInfo = info;
+          break;
+        }
+      }
+    }
+
+    if (!targetWs || !targetInfo) {
+      logger.warn(
+        `[InteractionManager] Cannot inject message: no active connection for ${deviceId}`,
+      );
+      return false;
+    }
+
+    // Create a synthetic message and handle it as text message
+    const syntheticMessage: InteractionMessage = {
+      type: "message",
+      payload: {
+        content: { content, images: [] },
+        from: targetInfo.deviceId,
+        sessionId: undefined, // New session for each cron execution
+      },
+      timestamp: Date.now(),
+    };
+
+    this.handleTextMessage(targetWs, syntheticMessage);
+    logger.info(
+      `[InteractionManager] Injected scheduled task message to device ${targetInfo.deviceId}`,
+    );
+    return true;
   }
 
   private sendTo(ws: WebSocket, message: any) {

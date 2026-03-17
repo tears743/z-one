@@ -12,14 +12,19 @@ Your goal is NOT to do the work yourself, but to build the perfect team for the 
     - **Autonomy**: Instruct your agents to be autonomous. They should not ask for user confirmation for every step.
 
 2.  **Mission Planning (Delegation)**:
-    - Break the goal into atomic, sequential (or parallel) tasks.
+    - Break the goal into **stages**. Each stage contains tasks that run **SIMULTANEOUSLY (in parallel)**.
+    - **CRITICAL STAGE RULE**: Tasks in the SAME stage execute at the SAME TIME. They CANNOT see each other's results.
+      - If Task B needs the output/result of Task A, they **MUST** be in **DIFFERENT stages** (Task A in an earlier stage).
+      - Only put tasks in the same stage if they are truly independent of each other.
+    - Example: "Fetch data" → "Process data" → "Write results" = **3 separate stages**, NOT 1 stage with 3 tasks.
+    - Stages execute sequentially (Stage 1 completes fully before Stage 2 starts).
     - Assign each task to the most suitable teammate from your roster.
-    - Ensure dependencies are clear.
+    - Use the \`dependencies\` field to indicate which prior task IDs a task depends on.
 
 **Process:**
 1.  **Understand**: Analyze User Goal & Context.
 2.  **Staff**: Create a roster of specialized agents.
-3.  **Plan**: Define the mission tasks and assignments.
+3.  **Plan**: Define the mission stages and task assignments. Remember: same stage = parallel, different stages = sequential.
 
 **Output Format (JSON Only):**
 \`\`\`json
@@ -36,14 +41,24 @@ Your goal is NOT to do the work yourself, but to build the perfect team for the 
   ],
   "mission": [
     {
-      "id": "stage_1",
-      "name": "Stage Name",
+      "name": "Data Retrieval",
       "tasks": [
         {
           "id": "task_1",
-          "description": "Precise instructions for the agent. Include necessary context.",
-          "assignedTo": "Name",
+          "description": "Fetch the required data from the API...",
+          "assignedTo": "Data_Fetcher",
           "dependencies": []
+        }
+      ]
+    },
+    {
+      "name": "Data Processing & Persistence",
+      "tasks": [
+        {
+          "id": "task_2",
+          "description": "Process the data retrieved in Stage 1 and write it to file...",
+          "assignedTo": "Data_Processor",
+          "dependencies": ["task_1"]
         }
       ]
     }
@@ -51,6 +66,7 @@ Your goal is NOT to do the work yourself, but to build the perfect team for the 
 }
 \`\`\`
 `;
+
 
 export const generateTeamRequestPrompt = (
   goal: string,

@@ -1,0 +1,28 @@
+{
+  "name": "z-one-cli-tool",
+  "version": "1.0.0",
+  "description": "安全的命令行调用工具 - 支持安全执行系统命令、参数验证、日志记录和错误处理",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "run": "node main.js",
+    "help": "node main.js --help",
+    "test": "node main.js --test"
+  },
+  "bin": {
+    "zcli": "./main.js"
+  },
+  "keywords": [
+    "cli",
+    "command",
+    "security",
+    "shell",
+    "exec",
+    "safe-execution"
+  ],
+  "author": "Z-One Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

@@ -5,7 +5,8 @@ export type ModelProvider =
   | "deepseek"
   | "minimax"
   | "qwen"
-  | "ollama";
+  | "ollama"
+  | "lm_studio";
 
 export interface ModelConfig {
   id: string; // Unique ID for this config entry
@@ -25,6 +26,23 @@ export interface ModelConfig {
   enableThinking?: boolean; // For reasoning models
 }
 
+export type DeviceType = "lark" | "hardware";
+
+export interface DeviceConfig {
+  id: string;
+  type: DeviceType;
+  name: string; // Display name, e.g. "我的飞书机器人"
+  enabled: boolean;
+  // Lark specific
+  appId?: string;
+  appSecret?: string;
+  // Hardware specific
+  connectionType?: "serial" | "bluetooth" | "tcp";
+  address?: string; // COM port / BLE address / IP:port
+  baudRate?: number; // Serial baud rate
+  protocol?: string; // Custom protocol identifier
+}
+
 export interface AppSettings {
   general: {
     theme: "light" | "dark" | "system";
@@ -33,6 +51,7 @@ export interface AppSettings {
     agentWorkspace?: string;
   };
   models: ModelConfig[];
+  devices: DeviceConfig[];
   activeModelId: string; // ID of the currently selected ModelConfig (LLM/Multimodal)
   activeEmbeddingModelId?: string; // ID of the currently selected Embedding Model
   agentModelId?: string; // ID of the selected Agent model
@@ -97,6 +116,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     language: "zh",
   },
   models: DEFAULT_MODELS,
+  devices: [],
   activeModelId: "openai-gpt-4o",
   activeEmbeddingModelId: "openai-text-embedding-3-small",
   agentModelId: "openai-gpt-4o",

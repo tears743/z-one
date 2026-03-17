@@ -48,6 +48,23 @@ export function initDB(path: string) {
     )
   `);
 
+  // Create scheduled_tasks table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      task_description TEXT NOT NULL,
+      cron_expression TEXT,
+      run_at INTEGER,
+      type TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      last_run INTEGER,
+      next_run INTEGER,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
   // Migration: Add model_type column if missing
   try {
     const columns = db.prepare("PRAGMA table_info(models)").all() as any[];
@@ -154,6 +171,7 @@ export function getAppSettings(): AppSettings {
   return {
     general: general as AppSettings["general"],
     models: finalModels,
+    devices: getSetting("devices", []),
     activeModelId,
     activeEmbeddingModelId,
     agentModelId,
@@ -193,6 +211,12 @@ export function saveAppSettings(settings: AppSettings) {
     insertSetting.run(
       "agent_model_id",
       JSON.stringify(settings.agentModelId || settings.activeModelId),
+    );
+
+    // Save Devices config
+    insertSetting.run(
+      "devices",
+      JSON.stringify(settings.devices || []),
     );
 
     // Sync Models (Smart Sync)
@@ -373,4 +397,84 @@ export function getDevices(): DeviceConfig[] {
     status: row.status as any,
     lastConnected: row.last_connected,
   }));
+}
+
+// === Scheduled Tasks API ===
+
+export interface ScheduledTaskRecord {
+  id: string;
+  name: string;
+  taskDescription: string;
+  cronExpression?: string;
+  runAt?: number;
+  type: "cron" | "once";
+  deviceId: string;
+  enabled: boolean;
+  lastRun?: number;
+  nextRun?: number;
+  createdAt: number;
+}
+
+export function saveScheduledTask(task: ScheduledTaskRecord) {
+  if (!db) throw new Error("DB not initialized");
+  const stmt = db.prepare(`
+    INSERT INTO scheduled_tasks (id, name, task_description, cron_expression, run_at, type, device_id, enabled, last_run, next_run, created_at)
+    VALUES (@id, @name, @taskDescription, @cronExpression, @runAt, @type, @deviceId, @enabled, @lastRun, @nextRun, @createdAt)
+    ON CONFLICT(id) DO UPDATE SET
+      name=excluded.name,
+      task_description=excluded.task_description,
+      cron_expression=excluded.cron_expression,
+      run_at=excluded.run_at,
+      type=excluded.type,
+      device_id=excluded.device_id,
+      enabled=excluded.enabled,
+      last_run=excluded.last_run,
+      next_run=excluded.next_run
+  `);
+  stmt.run({
+    id: task.id,
+    name: task.name,
+    taskDescription: task.taskDescription,
+    cronExpression: task.cronExpression || null,
+    runAt: task.runAt || null,
+    type: task.type,
+    deviceId: task.deviceId,
+    enabled: task.enabled ? 1 : 0,
+    lastRun: task.lastRun || null,
+    nextRun: task.nextRun || null,
+    createdAt: task.createdAt,
+  });
+}
+
+export function getScheduledTasks(): ScheduledTaskRecord[] {
+  if (!db) throw new Error("DB not initialized");
+  const rows = db.prepare("SELECT * FROM scheduled_tasks").all() as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    taskDescription: row.task_description,
+    cronExpression: row.cron_expression || undefined,
+    runAt: row.run_at || undefined,
+    type: row.type as "cron" | "once",
+    deviceId: row.device_id,
+    enabled: Boolean(row.enabled),
+    lastRun: row.last_run || undefined,
+    nextRun: row.next_run || undefined,
+    createdAt: row.created_at,
+  }));
+}
+
+export function deleteScheduledTask(id: string) {
+  if (!db) throw new Error("DB not initialized");
+  db.prepare("DELETE FROM scheduled_tasks WHERE id = ?").run(id);
+}
+
+export function updateScheduledTaskLastRun(id: string, lastRun: number) {
+  if (!db) throw new Error("DB not initialized");
+  db.prepare("UPDATE scheduled_tasks SET last_run = ? WHERE id = ?").run(lastRun, id);
+}
+
+export function toggleScheduledTask(id: string, enabled: boolean) {
+  if (!db) throw new Error("DB not initialized");
+  db.prepare("UPDATE scheduled_tasks SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
 }

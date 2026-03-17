@@ -12,6 +12,7 @@ async function streamChatCompletionViaSSE(args: {
   apiKey: string;
   body: unknown;
   onChunk?: (chunk: string) => void;
+  signal?: AbortSignal;
 }): Promise<string> {
   const url = new URL(
     "chat/completions",
@@ -26,6 +27,7 @@ async function streamChatCompletionViaSSE(args: {
       Accept: "text/event-stream",
     },
     body: JSON.stringify(args.body),
+    signal: args.signal,
   });
 
   if (!response.ok) {
@@ -261,8 +263,10 @@ export class LLMService {
     jsonMode: boolean = false,
     onChunk?: (chunk: string) => void,
     tools?: any[],
+    signal?: AbortSignal,
+    jsonSchema?: { name: string; schema: object },
   ): Promise<any> {
-    return generateCompletion(messages, config, jsonMode, onChunk, tools);
+    return generateCompletion(messages, config, jsonMode, onChunk, tools, signal, jsonSchema);
   }
 }
 export interface ChatMessage {
@@ -272,7 +276,11 @@ export interface ChatMessage {
     | Array<
         | { type: "text"; text: string }
         | { type: "image_url"; image_url: { url: string } }
-      >;
+      >
+    | null;
+  tool_calls?: any[];
+  tool_call_id?: string;
+  name?: string;
 }
 
 export async function generateCompletion(
@@ -281,6 +289,8 @@ export async function generateCompletion(
   jsonMode: boolean = false,
   onChunk?: (chunk: string) => void,
   tools?: any[],
+  signal?: AbortSignal,
+  jsonSchema?: { name: string; schema: object },
 ): Promise<any> {
   const baseURL = config.baseUrl;
   const apiKey = config.apiKey;
@@ -293,7 +303,7 @@ export async function generateCompletion(
     `[LLMService] Config details: messages:${JSON.stringify(messages)} BaseURL=${baseURL}, APIKeyPresent=${!!apiKey}, JsonMode=${jsonMode}, Stream=${!!onChunk}, Tools=${!!tools}`,
   );
 
-  if (!apiKey) {
+  if (!apiKey && !config.isCustom && config.provider !== "ollama" && config.provider !== "lm_studio") {
     logger.error("[LLMService] Missing API Key in config", {
       config: JSON.stringify(config, null, 2),
     });
@@ -302,7 +312,7 @@ export async function generateCompletion(
 
   const openai = new OpenAI({
     baseURL: baseURL || undefined,
-    apiKey,
+    apiKey: apiKey || "dummy", // Local models might not need a key, but SDK requires one
   });
   const msg = messages.map((m) => {
     // Ensure content is properly formatted for OpenAI
@@ -340,7 +350,6 @@ export async function generateCompletion(
   const params: any = {
     model: config.modelId,
     messages: msg,
-    response_format: jsonMode ? { type: "json_object" } : undefined,
   };
 
   // Add tools if provided
@@ -355,9 +364,14 @@ export async function generateCompletion(
 
   if (config.maxTokens !== undefined) {
     // For reasoning models (often indicated by enableThinking), standard is max_completion_tokens
-    // Or if jsonMode is enabled, we might need to be careful with max_tokens
-    if (config.enableThinking) {
-      // reasoning models use max_completion_tokens
+    // But local models (LM Studio, Ollama) and custom models don't support it - always use max_tokens
+    const useMaxCompletionTokens =
+      config.enableThinking &&
+      !config.isCustom &&
+      config.provider !== "lm_studio" &&
+      config.provider !== "ollama";
+
+    if (useMaxCompletionTokens) {
       params.max_completion_tokens = config.maxTokens;
     } else {
       params.max_tokens = config.maxTokens;
@@ -365,12 +379,28 @@ export async function generateCompletion(
   }
 
   // Enforce JSON Mode via response_format if requested
-  // Note: some models (like gpt-4-turbo) require "json" in the system prompt for json_object to work.
   if (jsonMode) {
-    params.response_format = { type: "json_object" };
+    if (config.provider === "lm_studio" && jsonSchema) {
+      // LM Studio supports json_schema format (not json_object)
+      params.response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: jsonSchema.name,
+          schema: jsonSchema.schema,
+          strict: true,
+        },
+      };
+    } else if (
+      !config.isCustom &&
+      config.provider !== "lm_studio" &&
+      config.provider !== "ollama"
+    ) {
+      // Cloud providers support json_object
+      params.response_format = { type: "json_object" };
+    }
+    // Ollama and custom models: rely on prompt-based JSON enforcement only
 
     // Ensure "json" is mentioned in the system message if not already
-    // This is a requirement for OpenAI models when using json_object
     const systemMsg = params.messages.find((m: any) => m.role === "system");
     if (
       systemMsg &&
@@ -400,15 +430,71 @@ export async function generateCompletion(
   }
 
   try {
-    if (shouldStream && !tools) {
+    if (shouldStream && !hasTools) {
       return await streamChatCompletionViaSSE({
         baseUrl: baseURL || undefined,
-        apiKey,
+        apiKey: apiKey || "dummy",
         body: params,
         onChunk,
+        signal,
       });
+    } else if (
+      (config.provider === "lm_studio" || config.provider === "ollama") &&
+      !hasTools
+    ) {
+      // Use raw fetch for local models (LM Studio / Ollama) to avoid
+      // OpenAI SDK response parsing issues
+      const url = new URL(
+        "chat/completions",
+        normalizeBaseUrl(baseURL),
+      ).toString();
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey || "dummy"}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...params, stream: false }),
+        signal,
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `${config.provider} request failed (${res.status}): ${text || res.statusText}`,
+        );
+      }
+
+      const json = (await res.json()) as any;
+      const content =
+        json?.choices?.[0]?.message?.content ?? json?.choices?.[0]?.text ?? null;
+
+      if (content === null) {
+        logger.error(
+          `[LLMService] No content in ${config.provider} response`,
+          { response: JSON.stringify(json, null, 2) },
+        );
+        throw new Error(
+          `Model ${config.modelId} returned no content. Raw: ${JSON.stringify(json)}`,
+        );
+      }
+
+      return content;
     } else {
-      const response = await openai.chat.completions.create(params);
+      const response = await openai.chat.completions.create(params, { signal });
+
+      // Safety check: some models may return empty choices
+      if (!response?.choices || response.choices.length === 0) {
+        logger.error(
+          `[LLMService] Empty choices in response from ${config.modelId}`,
+          { response: JSON.stringify(response, null, 2) },
+        );
+        throw new Error(
+          `Model ${config.modelId} returned no choices. Raw response: ${JSON.stringify(response)}`,
+        );
+      }
+
       const message = response.choices[0].message;
 
       // If tools were requested, return the full message object
@@ -419,10 +505,15 @@ export async function generateCompletion(
       // Otherwise return just content string for backward compatibility
       return message.content;
     }
-  } catch (error) {
+  } catch (error: any) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorDetails = error?.response?.data || error?.response || error;
     logger.error(
-      `Failed to generate completion with model ${config.modelId}`,
-      error,
+      `Failed to generate completion with model ${config.modelId}. Error: ${errorMsg}`,
+      {
+        params: JSON.stringify(params, null, 2),
+        details: JSON.stringify(errorDetails, null, 2),
+      }
     );
     throw error;
   }

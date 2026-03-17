@@ -55,6 +55,20 @@ Analyze the complexity.
 `;
 
     try {
+      const triageSchema = {
+        name: "triage_result",
+        schema: {
+          type: "object",
+          properties: {
+            isComplex: { type: "boolean" },
+            reasoning: { type: "string" },
+            directResponse: { type: ["string", "null"] },
+          },
+          required: ["isComplex", "reasoning"],
+          additionalProperties: false,
+        },
+      };
+
       const response = await this.llmService.generateCompletion(
         [
           { role: "system", content: TRIAGE_SYSTEM_PROMPT },
@@ -62,6 +76,10 @@ Analyze the complexity.
         ],
         modelConfig,
         true, // jsonMode
+        undefined, // onChunk
+        undefined, // tools
+        undefined, // signal
+        triageSchema,
       );
 
       if (!response) {

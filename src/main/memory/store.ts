@@ -55,7 +55,6 @@ export function initMemoryStore() {
   );
 
   // 2. Vector storage (sqlite-vec)
-  // Table creation is deferred until we know the dimensions in ensureVectorTable
 
   // 3. FTS storage (Keyword Search)
   db.exec(`
@@ -81,36 +80,6 @@ function ensureFragmentsSchema() {
   }
 }
 
-export function ensureVectorTable(dimensions: number) {
-  if (!db) throw new Error("DB not initialized");
-
-  // Check if table exists and has correct dimensions
-  try {
-    const result = db
-      .prepare(`SELECT sql FROM sqlite_master WHERE name='vec_fragments'`)
-      .get() as { sql: string } | undefined;
-    if (result) {
-      // Check dimensions in SQL (e.g., "float[1536]")
-      const match = result.sql.match(/float\[(\d+)\]/);
-      if (match && parseInt(match[1]) === dimensions) {
-        return; // Correct dimensions
-      }
-      console.warn(
-        `[MemoryStore] Vector dimensions changed (old: ${match?.[1]}, new: ${dimensions}). Recreating table.`,
-      );
-      db.exec("DROP TABLE vec_fragments");
-    }
-  } catch (e) {
-    // Table might not exist, ignore
-  }
-
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_fragments USING vec0(
-      id TEXT PRIMARY KEY,
-      embedding float[${dimensions}]
-    );
-  `);
-}
 
 export function saveFragment(fragment: MemoryFragment) {
   if (!db) throw new Error("DB not initialized");
@@ -120,10 +89,15 @@ export function saveFragment(fragment: MemoryFragment) {
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const insertVector = db.prepare(`
-    INSERT OR REPLACE INTO vec_fragments (id, embedding)
-    VALUES (?, ?)
-  `);
+  let insertVector: Database.Statement | null = null;
+  try {
+    insertVector = db.prepare(`
+      INSERT OR REPLACE INTO vec_fragments (id, embedding)
+      VALUES (?, ?)
+    `);
+  } catch (e) {
+    // Table might not exist yet
+  }
 
   const insertFTS = db.prepare(`
     INSERT INTO fts_fragments (content, id)
@@ -142,8 +116,7 @@ export function saveFragment(fragment: MemoryFragment) {
     );
 
     // Update Vector
-    if (fragment.embedding) {
-      // Ensure vector table exists (it should, handled by addMemory -> ensureVectorTable)
+    if (fragment.embedding && insertVector) {
       insertVector.run(
         fragment.id,
         Buffer.from(new Float32Array(fragment.embedding).buffer),
@@ -167,17 +140,25 @@ export function deleteFragmentsBySource(source: string) {
   if (ids.length === 0) return;
 
   const deleteFragment = db.prepare("DELETE FROM fragments WHERE id = ?");
-  const deleteVector = db.prepare("DELETE FROM vec_fragments WHERE id = ?");
+  
+  let deleteVector: Database.Statement | null = null;
+  try {
+    deleteVector = db.prepare("DELETE FROM vec_fragments WHERE id = ?");
+  } catch (e) {
+    // Table might not exist
+  }
 
   // FTS delete is harder without rowid mapping, skipping for now as it's just keyword search index.
 
   const transaction = db.transaction(() => {
     for (const { id } of ids) {
       deleteFragment.run(id);
-      try {
-        deleteVector.run(id);
-      } catch (e) {
-        // Vector table might not exist or ID not in it
+      if (deleteVector) {
+        try {
+          deleteVector.run(id);
+        } catch (e) {
+          // Vector table might not exist or ID not in it
+        }
       }
     }
   });

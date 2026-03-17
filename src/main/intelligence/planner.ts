@@ -6,7 +6,7 @@ import { Plan } from "../control/types";
 import { logger } from "../logger";
 import { AgentFactory } from "../agent/factory";
 import { AgentMessage } from "../agent/types";
-import { addMemory, searchMemory } from "../memory/manager";
+// import { addMemory, searchMemory } from "../memory/manager"; // Temporarily disabled vector DB
 import { TriageAgent } from "./triage";
 import {
   generateOutputPrompt,
@@ -17,7 +17,7 @@ import {
 import { FileSessionStore } from "../memory/file-store";
 
 export class Planner {
-  private llmService: LLMService;
+  public llmService: LLMService;
   private toolRegistry: ToolRegistry;
   private taskManager: TaskManager;
   private teamOrchestrator: TeamOrchestrator;
@@ -51,25 +51,26 @@ export class Planner {
     modelConfig: any,
     onStream?: (chunk: string) => void,
     rawSessionId: string = "global",
+    signal?: AbortSignal,
   ): Promise<string> {
     const sessionId = rawSessionId || "global";
 
-    // RAG: Search Long-Term Memory
+    // RAG: Search Long-Term Memory (Temporarily disabled)
     let memoryContext = "";
-    try {
-      const textContent = typeof content === "string" ? content : "User Input";
-      const relevantMemories = await searchMemory(textContent, {
-        limit: 5,
-        sessionId,
-      });
-      if (relevantMemories.length > 0) {
-        memoryContext = relevantMemories
-          .map((m) => `- ${m.content} (Source: ${m.source})`)
-          .join("\n");
-      }
-    } catch (e) {
-      logger.warn("Failed to search memory", e);
-    }
+    // try {
+    //   const textContent = typeof content === "string" ? content : "User Input";
+    //   const relevantMemories = await searchMemory(textContent, {
+    //     limit: 5,
+    //     sessionId,
+    //   });
+    //   if (relevantMemories.length > 0) {
+    //     memoryContext = relevantMemories
+    //       .map((m) => `- ${m.content} (Source: ${m.source})`)
+    //       .join("\n");
+    //   }
+    // } catch (e) {
+    //   logger.warn("Failed to search memory", e);
+    // }
 
     // 1. Create Input Agent for this device
     // const inputAgent = this.agentFactory.createInputAgent(
@@ -78,7 +79,19 @@ export class Planner {
     // );
 
     // Load History
-    const history = await this.sessionStore.loadSession(sessionId);
+    let history = await this.sessionStore.loadSession(sessionId);
+
+    // Check and compress file-level history if it exceeds 85% of max tokens
+    if (modelConfig?.inputMaxTokens && history.length > 0) {
+      history = await this.sessionStore.checkAndCompressIfNeeded(
+        sessionId,
+        history,
+        modelConfig.inputMaxTokens,
+        modelConfig,
+        0.85,
+        onStream, // Notify device about compression status
+      );
+    }
 
     // if (history.length > 0) {
     //   inputAgent.setHistory(history);
@@ -98,25 +111,24 @@ export class Planner {
       onStream("\n*Thinking (Analyzing Request)...*\n");
     }
 
-    // Persist user input to Memory (Vector) and File
+    // Persist user input to File Session
     const textContent =
       typeof content === "string" ? content : "[Multimodal Content]";
 
-    // Vector DB (RAG)
-    try {
-      if (textContent && textContent.trim().length > 0) {
-        await addMemory(
-          textContent,
-          "user",
-          "user",
-          ["interaction", deviceId],
-          sessionId,
-          // TODO: This should be "session" but we use "user" layer for now
-        );
-      }
-    } catch (e) {
-      logger.error("Failed to persist input to vector memory", e);
-    }
+    // Vector DB (RAG) - Temporarily disabled
+    // try {
+    //   if (textContent && textContent.trim().length > 0) {
+    //     await addMemory(
+    //       textContent,
+    //       "user",
+    //       "user",
+    //       ["interaction", deviceId],
+    //       sessionId,
+    //     );
+    //   }
+    // } catch (e) {
+    //   logger.error("Failed to persist input to vector memory", e);
+    // }
 
     // File Session
     try {
@@ -160,6 +172,9 @@ export class Planner {
 
     fullContext += `\n\nRecent History:\n${contextHistory}`;
 
+    // Check abort before triage
+    if (signal?.aborted) throw new Error("Request aborted");
+
     const triageResult = await this.triageAgent.evaluate(
       refinedIntent,
       fullContext,
@@ -177,18 +192,18 @@ export class Planner {
         onStream(response);
       }
 
-      // Persist to Vector Memory
-      try {
-        await addMemory(
-          response,
-          "user",
-          "assistant",
-          ["interaction", deviceId],
-          sessionId,
-        );
-      } catch (e) {
-        logger.error("Failed to persist simple response to vector memory", e);
-      }
+      // Persist to Vector Memory - Temporarily disabled
+      // try {
+      //   await addMemory(
+      //     response,
+      //     "user",
+      //     "assistant",
+      //     ["interaction", deviceId],
+      //     sessionId,
+      //   );
+      // } catch (e) {
+      //   logger.error("Failed to persist simple response to vector memory", e);
+      // }
 
       // Persist to File Session
       try {
@@ -218,6 +233,9 @@ export class Planner {
       }
     };
 
+    // Check abort before team execution
+    if (signal?.aborted) throw new Error("Request aborted");
+
     const teamResult = await this.teamOrchestrator.executeMission(
       refinedIntent,
       fullContext,
@@ -236,6 +254,7 @@ export class Planner {
           logger.error("Failed to append real-time log to session", e);
         }
       },
+      signal,
     );
 
     // Persist full execution trace to File Session (Summary)
@@ -248,18 +267,18 @@ export class Planner {
       logger.error("Failed to persist execution log to file session", e);
     }
 
-    // Persist agent execution results to memory
-    try {
-      await addMemory(
-        `Executed plan for goal: ${refinedIntent}. Results: ${teamResult}`,
-        "user",
-        "system",
-        ["execution", deviceId],
-        sessionId,
-      );
-    } catch (e) {
-      logger.error("Failed to persist execution results", e);
-    }
+    // Persist agent execution results to memory - Temporarily disabled
+    // try {
+    //   await addMemory(
+    //     `Executed plan for goal: ${refinedIntent}. Results: ${teamResult}`,
+    //     "user",
+    //     "system",
+    //     ["execution", deviceId],
+    //     sessionId,
+    //   );
+    // } catch (e) {
+    //   logger.error("Failed to persist execution results", e);
+    // }
 
     // Here we can use the original config (if it had stream=true, we could stream output back)
     // But currently InteractionManager expects a Promise<string> return.
@@ -292,18 +311,18 @@ export class Planner {
 
     logger.info(`Final response generated: ${finalResponse}`);
 
-    // Persist system response to Vector Memory
-    try {
-      await addMemory(
-        finalResponse,
-        "user",
-        "assistant",
-        ["interaction", deviceId],
-        sessionId,
-      );
-    } catch (e) {
-      logger.error("Failed to persist output message to vector memory", e);
-    }
+    // Persist system response to Vector Memory - Temporarily disabled
+    // try {
+    //   await addMemory(
+    //     finalResponse,
+    //     "user",
+    //     "assistant",
+    //     ["interaction", deviceId],
+    //     sessionId,
+    //   );
+    // } catch (e) {
+    //   logger.error("Failed to persist output message to vector memory", e);
+    // }
 
     // Persist to File Session
     try {

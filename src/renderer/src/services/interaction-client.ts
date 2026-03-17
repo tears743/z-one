@@ -189,6 +189,11 @@ class InteractionClient {
           this.historyCallback(message.payload);
         }
         break;
+      case "request_cancelled":
+        if (this.cancelCallback) {
+          this.cancelCallback(message.payload);
+        }
+        break;
       // Handle other messages
     }
   }
@@ -232,8 +237,21 @@ class InteractionClient {
     );
   }
 
+  public cancelRequest() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    this.ws.send(
+      JSON.stringify({
+        type: "cancel_request",
+        payload: { deviceId: this.deviceId },
+        timestamp: Date.now(),
+      }),
+    );
+  }
+
   private sessionCallback: ((payload: any) => void) | null = null;
   private historyCallback: ((payload: any) => void) | null = null;
+  private cancelCallback: ((payload: any) => void) | null = null;
 
   public requestSession(requestId?: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -280,6 +298,10 @@ class InteractionClient {
 
   public onSessionHistoryResponse(callback: (payload: any) => void) {
     this.historyCallback = callback;
+  }
+
+  public onRequestCancelled(callback: (payload: any) => void) {
+    this.cancelCallback = callback;
   }
 
   public onMessage(callback: (msg: any) => void) {

@@ -4,7 +4,6 @@ import { LLMService, ChatMessage } from "../model/llm-service";
 import { ToolRegistry } from "../execution/tool-registry";
 import { logger } from "../logger";
 import { estimateMessageTokens } from "../model/token-counter";
-import { summarizeSession } from "../memory/manager";
 
 export class Agent {
   public config: AgentConfig;
@@ -43,6 +42,7 @@ export class Agent {
         >,
     onChunk?: (chunk: string) => void,
     onStep?: (step: string) => void,
+    signal?: AbortSignal,
   ): Promise<string> {
     this.state.status = "thinking";
     this.history.push({ role: "user", content: input });
@@ -57,14 +57,18 @@ export class Agent {
     // Prepare Tools
     const tools = await this.getNativeTools();
 
-    // Check if we should use native tools or legacy tooling
-    // Reasoning models (enableThinking=true) often don't support native tools well
-    // or prefer to output reasoning text first.
-    // If legacy tooling is used, we don't pass tools to the API, forcing the model
-    // to output text (JSON) which we parse.
-    const useNativeTools = !this.config.modelConfig?.enableThinking;
+    // Always use native tools (function calling) for reliable tool execution.
+    // Legacy JSON text parsing is kept as fallback but is unreliable for tools 
+    // whose args contain nested JSON/markdown (e.g. write_file with markdown content).
+    // Most modern models (including kimi2.5) support both thinking and function calling.
+    const useNativeTools = true;
 
     while (steps < MAX_STEPS) {
+      // Check abort at each iteration
+      if (signal?.aborted) {
+        logger.info(`[Agent] Process aborted at step ${steps}`);
+        return finalAnswer || "[Task aborted]";
+      }
       steps++;
 
       try {
@@ -76,9 +80,17 @@ export class Agent {
             name: m.name,
           };
 
-          // Only tool messages need tool_call_id when sent to the provider.
-          // We intentionally do NOT forward historical assistant.tool_calls
-          // to avoid providers requiring matching tool role messages for them.
+          // Forward tool_calls and reasoning_content on assistant messages so that
+          // subsequent tool-role messages have a matching tool_call_id reference,
+          // and thinking-enabled models (e.g. kimi-k2.5) get required reasoning_content.
+          if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+            base.tool_calls = m.tool_calls;
+            if (m.reasoning_content) {
+              base.reasoning_content = m.reasoning_content;
+            }
+          }
+
+          // Forward tool_call_id on tool messages.
           if (m.role === "tool" && m.tool_call_id) {
             base.tool_call_id = m.tool_call_id;
           }
@@ -97,6 +109,7 @@ export class Agent {
             if (onChunk) onChunk(chunk);
           },
           useNativeTools ? tools : undefined,
+          signal,
         );
 
         if (!response) {
@@ -110,6 +123,7 @@ export class Agent {
             role: "assistant",
             content: response.content || null,
             tool_calls: toolCalls,
+            reasoning_content: response.reasoning_content || undefined,
           };
           this.history.push(assistantMsg);
 
@@ -122,6 +136,12 @@ export class Agent {
 
           // Execute Tools
           for (const toolCall of toolCalls) {
+            // Check abort before each tool call
+            if (signal?.aborted) {
+              logger.info(`[Agent] Aborted before tool: ${toolCall.function.name}`);
+              return finalAnswer || "[Task aborted]";
+            }
+
             const functionName = toolCall.function.name;
             const argsString = toolCall.function.arguments;
             const toolCallId = toolCall.id;
@@ -142,13 +162,32 @@ export class Agent {
                 // Let's rely on ToolRegistry to handle unknown tools or implement check here
               }
 
-              const result = await this.toolRegistry.callTool(
+              // Race tool execution against abort signal
+              const toolPromise = this.toolRegistry.callTool(
                 functionName,
                 args,
               );
+
+              let result: any;
+              if (signal) {
+                result = await Promise.race([
+                  toolPromise,
+                  new Promise<never>((_, reject) => {
+                    if (signal.aborted) reject(new Error("Aborted"));
+                    signal.addEventListener("abort", () => reject(new Error("Aborted")), { once: true });
+                  }),
+                ]);
+              } else {
+                result = await toolPromise;
+              }
+
               resultStr =
                 typeof result === "string" ? result : JSON.stringify(result);
             } catch (e: any) {
+              if (signal?.aborted) {
+                logger.info(`[Agent] Tool ${functionName} aborted`);
+                return finalAnswer || "[Task aborted]";
+              }
               resultStr = `Error: ${e.message}`;
             }
 
@@ -389,64 +428,51 @@ export class Agent {
       currentTokens += estimateMessageTokens(msg);
     }
 
-    if (currentTokens <= maxInputTokens) return;
+    // Trigger compression at 85% of max tokens
+    const threshold = 0.85;
+    const tokenLimit = Math.floor(maxInputTokens * threshold);
+    if (currentTokens <= tokenLimit) return;
 
     logger.info(
-      `History tokens (${currentTokens}) exceed limit (${maxInputTokens}). Compressing...`,
+      `[Agent] History tokens (${currentTokens}) exceed ${Math.round(threshold * 100)}% of limit (${maxInputTokens}). Compressing...`,
     );
 
     // Compression Strategy:
     // 1. Keep System Prompt (Index 0)
-    // 2. Keep last N messages (e.g., last 2 turns) to maintain immediate context
+    // 2. Keep last N messages (e.g., last 4 turns) to maintain immediate context
     // 3. Summarize the middle part
 
     if (this.history.length <= 3) return; // Can't compress much if very short
 
     const systemPrompt = this.history[0];
-    const lastMessagesCount = 2;
+    const lastMessagesCount = Math.min(4, Math.floor(this.history.length / 2));
     const recentHistory = this.history.slice(-lastMessagesCount);
 
     const messagesToSummarize = this.history.slice(1, -lastMessagesCount);
     if (messagesToSummarize.length === 0) return;
 
-    // Persist to Long-Term Memory (OpenClaw Style)
-    // We summarize the session so far and save it to DB
-    try {
-      // Convert to simple format for summarizer
-      const simpleMessages = messagesToSummarize.map((m) => ({
-        role: m.role,
-        content:
-          typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-      }));
-      // Use a default session ID or pass it if available (Config needs update to support sessionId)
-      // For now, we'll use "agent_history_compression" as a pseudo-session if not provided
-      await summarizeSession(simpleMessages, this.config.id || "global");
-    } catch (e) {
-      logger.warn("Failed to persist summary to long-term memory", e);
-    }
-
     // Use LLM to summarize
-    // We create a temporary "Summarizer" context
     try {
       const summaryPrompt = `
-      Summarize the following conversation history concisely, retaining key facts, decisions, and tool outputs. 
-      Focus on what has been done and what information was gathered.
-      
-      Conversation:
-      ${JSON.stringify(messagesToSummarize)}
-      `;
+Summarize the following conversation history concisely, retaining key facts, decisions, and tool outputs. 
+Focus on what has been done and what information was gathered.
+Output in the same language as the input.
+
+Conversation:
+${JSON.stringify(messagesToSummarize)}
+`;
 
       const summary = await this.llmService.generateCompletion(
         [
           {
             role: "system",
             content:
-              "You are a helpful assistant that summarizes conversation history.",
+              "You are a helpful assistant that summarizes conversation history. Retain key facts, decisions, tool outputs, and important context. Be concise but thorough.",
           },
           { role: "user", content: summaryPrompt },
         ],
-        this.config.modelConfig,
-      ); // Use same model for summary
+        { ...this.config.modelConfig, stream: false },
+      );
 
       if (summary) {
         const summaryMessage: AgentMessage = {
@@ -457,12 +483,31 @@ export class Agent {
         // Reconstruct history
         this.history = [systemPrompt, summaryMessage, ...recentHistory];
 
-        logger.info(`History compressed. New length: ${this.history.length}`);
+        logger.info(
+          `[Agent] History compressed. New length: ${this.history.length}`,
+        );
+
+        // Persist compressed history to file if fileSessionStore is available
+        if (this.config.fileSessionStore && this.config.sessionId) {
+          try {
+            await this.config.fileSessionStore.compressSession(
+              this.config.sessionId,
+              this.history,
+              this.config.modelConfig,
+            );
+            logger.info(
+              `[Agent] Compressed history persisted to file for session ${this.config.sessionId}`,
+            );
+          } catch (e) {
+            logger.warn(
+              "[Agent] Failed to persist compressed history to file",
+              e,
+            );
+          }
+        }
       }
     } catch (e) {
-      logger.error("Failed to compress history:", e);
-      // Fallback: Just truncate middle messages if summarization fails
-      // this.history = [systemPrompt, ...recentHistory];
+      logger.error("[Agent] Failed to compress history:", e);
     }
   }
 

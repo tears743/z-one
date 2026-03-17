@@ -58,10 +58,13 @@ export const WriteFileTool: NativeTool = {
     execute: async (args: { path: string; content: string }) => {
         try {
             const fullPath = resolvePath(args.path);
+            console.log(`[WriteFile] Writing to: ${fullPath} (input path: ${args.path})`);
             await fs.mkdir(path.dirname(fullPath), { recursive: true });
             await fs.writeFile(fullPath, args.content, "utf-8");
-            return "File written successfully";
+            console.log(`[WriteFile] Success: ${fullPath}`);
+            return `File written successfully to ${fullPath}`;
         } catch (e: any) {
+            console.error(`[WriteFile] Failed: ${e.message}`);
             throw new Error(`Failed to write file: ${e.message}`);
         }
     }
