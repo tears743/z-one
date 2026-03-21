@@ -8,10 +8,14 @@ import { AgentFactory } from "../agent/factory";
 import { AgentMessage } from "../agent/types";
 // import { addMemory, searchMemory } from "../memory/manager"; // Temporarily disabled vector DB
 import { TriageAgent } from "./triage";
+import { WorkflowPlanner } from "../workflow/planner";
+import { WorkflowEngine } from "../workflow/engine";
 import {
   generateOutputPrompt,
   generatePlannerPrompt,
   PLANNER_SYSTEM_PROMPT,
+  PLANNER_CONVERSATION_PROMPT,
+  TRIAGE_PLANNER_CONTEXT,
 } from "../prompts/planner";
 
 import { FileSessionStore } from "../memory/file-store";
@@ -23,6 +27,8 @@ export class Planner {
   private teamOrchestrator: TeamOrchestrator;
   private agentFactory: AgentFactory;
   private triageAgent: TriageAgent;
+  private workflowPlanner: WorkflowPlanner;
+  private workflowEngine: WorkflowEngine | null = null;
   public sessionStore: FileSessionStore;
 
   constructor(
@@ -37,7 +43,23 @@ export class Planner {
     this.teamOrchestrator = teamOrchestrator;
     this.agentFactory = new AgentFactory(llmService, toolRegistry);
     this.triageAgent = new TriageAgent(llmService);
+    this.workflowPlanner = new WorkflowPlanner(llmService, toolRegistry);
     this.sessionStore = new FileSessionStore(llmService);
+  }
+
+  /** Set the workflow engine (created externally after store init) */
+  public setWorkflowEngine(engine: WorkflowEngine) {
+    this.workflowEngine = engine;
+  }
+
+  /** Get the workflow engine */
+  public getWorkflowEngine(): WorkflowEngine | null {
+    return this.workflowEngine;
+  }
+
+  /** Get the workflow planner */
+  public getWorkflowPlanner(): WorkflowPlanner {
+    return this.workflowPlanner;
   }
 
   public async processInput(
@@ -172,6 +194,8 @@ export class Planner {
 
     fullContext += `\n\nRecent History:\n${contextHistory}`;
 
+    fullContext += `\n\n${TRIAGE_PLANNER_CONTEXT}`;
+
     // Check abort before triage
     if (signal?.aborted) throw new Error("Request aborted");
 
@@ -183,29 +207,96 @@ export class Planner {
 
     logger.info(`Triage Result: ${JSON.stringify(triageResult)}`);
 
-    if (!triageResult.isComplex) {
-      // Direct Reply
-      logger.info("Handling as simple task (Direct Reply)");
-      const response = triageResult.directResponse || "I see.";
-
+    // Single Agent mode: one agent with specific tools (e.g., scheduled tasks, simple file ops)
+    // Check this BEFORE direct reply, since single_agent also has isComplex=false
+    if (triageResult.mode === "single_agent") {
+      logger.info("Handling as single-agent task");
       if (onStream) {
-        onStream(response);
+        onStream("\n*Processing with single agent...*\n");
       }
 
-      // Persist to Vector Memory - Temporarily disabled
-      // try {
-      //   await addMemory(
-      //     response,
-      //     "user",
-      //     "assistant",
-      //     ["interaction", deviceId],
-      //     sessionId,
-      //   );
-      // } catch (e) {
-      //   logger.error("Failed to persist simple response to vector memory", e);
-      // }
+      // Give the agent the triage's suggested tools + capability discovery meta-tools
+      // The agent can discover more tools via list_capabilities/get_capability_detail
+      const suggestedTools = triageResult.suggestedTools || [];
+      const discoveryTools = ["list_capabilities", "get_capability_detail"];
+      const agentTools = [...new Set([...suggestedTools, ...discoveryTools])];
 
-      // Persist to File Session
+      // Get only the tool definitions the agent actually needs
+      const allTools = await this.toolRegistry.getAllTools();
+      const agentToolDefs = allTools.filter((t) => agentTools.includes(t.name));
+
+      // Create a single agent with capability discovery prompt
+      const agent = this.agentFactory.createCustomAgent(
+        "TaskAgent",
+        `You are an expert AI assistant. You have a few assigned tools and the ability to discover more.
+
+**How to work:**
+1. Check your assigned tools — they were selected for this task.
+2. If you need a tool you don't have, call \`list_capabilities\` to see all available capabilities.
+3. Call \`get_capability_detail\` to get the full schema of any tool before using it.
+4. Execute the task step-by-step, report results clearly.
+
+**Common patterns:**
+- Scheduled/timed tasks → use \`schedule_task\`
+- Web data → discover browser tools via \`list_capabilities\`
+- File operations → discover file tools via \`list_capabilities\``,
+        agentTools,
+        agentToolDefs,
+        fullContext,
+        internalConfig,
+      );
+      agent.config.modelConfig = internalConfig;
+
+      if (signal?.aborted) throw new Error("Request aborted");
+
+      const result = await agent.process(
+        refinedIntent,
+        onStream,
+        undefined,
+        signal,
+      );
+
+      // Persist result
+      try {
+        await this.sessionStore.appendMessage(sessionId, {
+          role: "assistant",
+          content: result,
+        });
+      } catch (e) {
+        logger.error("Failed to persist single agent response to file session", e);
+      }
+
+      return result;
+    }
+
+    // Direct Reply (simple, non-tool tasks)
+    if (triageResult.mode === "direct" || !triageResult.isComplex) {
+      logger.info("Handling as simple task (Direct Reply with Planner LLM)");
+
+      // Build messages with planner system prompt + history + user request
+      const directMessages: AgentMessage[] = [
+        { role: "system", content: PLANNER_CONVERSATION_PROMPT },
+        ...history,
+        { role: "user", content: content },
+      ];
+
+      let response = "";
+      try {
+        const llmResponse = await this.llmService.generateCompletion(
+          directMessages as any,
+          { ...modelConfig, stream: !!onStream },
+          false,
+          onStream,
+          undefined,
+          signal,
+        );
+        response = llmResponse || triageResult.directResponse || "I see.";
+      } catch (e: any) {
+        logger.error("Direct LLM response failed, using triage fallback", e);
+        response = triageResult.directResponse || "I see.";
+        if (onStream) onStream(response);
+      }
+
       try {
         await this.sessionStore.appendMessage(sessionId, {
           role: "assistant",
@@ -217,7 +308,59 @@ export class Planner {
       return response;
     }
 
-    // 4. Complex Task -> Team Orchestrator (Swarm Mode)
+    // 4. Workflow Mode -> WorkflowPlanner (DAG creation)
+    if (triageResult.mode === "workflow") {
+      logger.info("Handling as workflow task");
+      if (onStream) {
+        onStream("\n*\u8fdb\u5165\u5de5\u4f5c\u6d41\u89c4\u5212\u6a21\u5f0f...*\n");
+      }
+
+      // Check abort
+      if (signal?.aborted) throw new Error("Request aborted");
+
+      const planResult = await this.workflowPlanner.planOrRefine(
+        refinedIntent,
+        history as AgentMessage[],
+        deviceId,
+        sessionId,
+        internalConfig,
+        undefined,
+        onStream,
+      );
+
+      let response: string;
+      if (planResult.needsClarification) {
+        response = planResult.clarificationQuestion || "\u8bf7\u63d0\u4f9b\u66f4\u591a\u4fe1\u606f\u4ee5\u4fbf\u6211\u521b\u5efa\u5de5\u4f5c\u6d41\u3002";
+      } else if (planResult.workflow) {
+        response = planResult.summary || `\u5de5\u4f5c\u6d41 "${planResult.workflow.name}" \u5df2\u521b\u5efa (v${planResult.workflow.version})`;
+
+        // Auto-start the workflow if engine is available
+        if (this.workflowEngine) {
+          try {
+            const run = await this.workflowEngine.startWorkflow(planResult.workflow.id, internalConfig);
+            response += `\n\n\u2705 \u5de5\u4f5c\u6d41\u5df2\u81ea\u52a8\u542f\u52a8 (runId: ${run.id})`;
+          } catch (err: any) {
+            response += `\n\n\u26a0\ufe0f \u5de5\u4f5c\u6d41\u521b\u5efa\u6210\u529f\u4f46\u542f\u52a8\u5931\u8d25: ${err.message}`;
+          }
+        }
+      } else {
+        response = "\u5de5\u4f5c\u6d41\u89c4\u5212\u5b8c\u6210\uff0c\u4f46\u672a\u751f\u6210\u6709\u6548\u5b9a\u4e49\u3002";
+      }
+
+      // Persist
+      try {
+        await this.sessionStore.appendMessage(sessionId, {
+          role: "assistant",
+          content: response,
+        });
+      } catch (e) {
+        logger.error("Failed to persist workflow response to file session", e);
+      }
+
+      return response;
+    }
+
+    // 5. Complex Task -> Team Orchestrator (Swarm Mode)
 
     // Status callback wrapper
     const onStatusUpdate = (status: string) => {

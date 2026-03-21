@@ -128,11 +128,13 @@ Example Output: "User is greeting the system."
     memoryContext?: string,
     modelConfig?: any,
   ): Agent {
-    const toolDefs = allAvailableTools
-      ? allAvailableTools.filter((t) => tools.includes(t.name))
-      : [];
+    // When allAvailableTools is provided, filter to get matching tool definitions
+    // When not provided, we can only work with tool names (no definitions for prompt)
+    let toolDefs: Tool[] = [];
+    let effectiveToolNames = [...tools];
 
     if (allAvailableTools) {
+      toolDefs = allAvailableTools.filter((t) => tools.includes(t.name));
       const missingTools = tools.filter(
         (t) => !allAvailableTools.find((at) => at.name === t),
       );
@@ -140,6 +142,24 @@ Example Output: "User is greeting the system."
         console.warn(
           `[AgentFactory] Requested tools not found for agent ${roleName}: ${missingTools.join(", ")}`,
         );
+      }
+    }
+
+    // If no tools specified at all, agent works without tools
+    // But ensure capability discovery tools are always available when agent has any tools
+    if (effectiveToolNames.length > 0) {
+      const discoveryTools = ["list_capabilities", "get_capability_detail"];
+      for (const dt of discoveryTools) {
+        if (!effectiveToolNames.includes(dt)) {
+          effectiveToolNames.push(dt);
+          // Also add the tool definition if available
+          if (allAvailableTools) {
+            const dtDef = allAvailableTools.find((t) => t.name === dt);
+            if (dtDef && !toolDefs.find((t) => t.name === dt)) {
+              toolDefs.push(dtDef);
+            }
+          }
+        }
       }
     }
 
@@ -162,7 +182,7 @@ Example Output: "User is greeting the system."
       role: "executor",
       description: persona.substring(0, 100) + "...",
       systemPrompt: prompt,
-      tools: tools,
+      tools: effectiveToolNames,
       modelConfig, // Pass the model config to the agent
     });
   }

@@ -49,7 +49,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const handleSend = () => {
-    if ((!text.trim() && images.length === 0) || loading) return;
+    if (!text.trim() && images.length === 0) return;
     onSend(text, images);
     setText("");
     setImages([]);

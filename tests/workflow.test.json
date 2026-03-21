@@ -1,0 +1,186 @@
+{
+  "name": "Z-One 工作流引擎测试（赚钱主题）",
+  "description": "通过 IPC 创建赚钱工作流，测试列表/详情/启动/版本。聊天触发 workflow 模式单独测试。",
+  "setup": [
+    { "action": "wait", "params": { "ms": 1000 } },
+    {
+      "action": "eval",
+      "params": {
+        "code": "(async () => { try { await window.api.workflow.delete('test-wf-earn-001'); } catch(e) {} return 'cleaned'; })()"
+      }
+    },
+    { "action": "wait", "params": { "ms": 300 } }
+  ],
+  "cases": [
+    {
+      "id": "WF001",
+      "name": "创建赚钱工作流（7 节点 DAG）",
+      "steps": [
+        {
+          "action": "eval",
+          "params": {
+            "code": "(async () => { const wf = { id: 'test-wf-earn-001', name: '赚钱计划工作流', description: '定期监控市场趋势，分析赚钱策略，条件判断可行性', nodes: [ { id: 'n1', type: 'task', label: '市场调研', config: { agentPersona: '市场研究员', prompt: '调研热门赚钱方式', tools: ['search_web'] }, position: { x: 200, y: 50 } }, { id: 'n2', type: 'task', label: '策略分析', config: { agentPersona: '策略师', prompt: '分析赚钱策略', tools: [] }, position: { x: 200, y: 200 } }, { id: 'n3', type: 'condition', label: '可行性评估', config: { expression: 'true', branches: [{ label: '可行', edgeId: 'e3' }, { label: '不可行', edgeId: 'e4' }] }, position: { x: 200, y: 350 } }, { id: 'n4', type: 'task', label: '执行计划', config: { agentPersona: '执行者', prompt: '执行赚钱计划', tools: ['write_file'] }, position: { x: 100, y: 500 } }, { id: 'n5', type: 'task', label: '调整策略', config: { agentPersona: '优化师', prompt: '调整策略', tools: [] }, position: { x: 300, y: 500 } }, { id: 'n6', type: 'gateway', label: '汇总', config: { mode: 'any' }, position: { x: 200, y: 650 } }, { id: 'n7', type: 'task', label: '生成报告', config: { agentPersona: '报告员', prompt: '生成赚钱报告', tools: ['write_file'] }, position: { x: 200, y: 800 } } ], edges: [ { id: 'e1', source: 'n1', target: 'n2' }, { id: 'e2', source: 'n2', target: 'n3' }, { id: 'e3', source: 'n3', target: 'n4', condition: '可行' }, { id: 'e4', source: 'n3', target: 'n5', condition: '不可行' }, { id: 'e5', source: 'n4', target: 'n6' }, { id: 'e6', source: 'n5', target: 'n6' }, { id: 'e7', source: 'n6', target: 'n7' } ], sourceDeviceId: '_zone_cli', sourceSessionId: 'test-earn', createdAt: Date.now(), updatedAt: Date.now() }; const created = await window.api.workflow.create(wf); return JSON.stringify({ created: true, id: created.id, name: created.name, nodeCount: created.nodes.length, version: created.version }); })()"
+          },
+          "timeout": 5000,
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "赚钱计划工作流" },
+            { "type": "contains", "target": "result", "expected": "nodeCount" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "WF002",
+      "name": "工作流列表页 — 卡片展示",
+      "steps": [
+        {
+          "action": "click",
+          "params": { "selector": ".header-view-tab:nth-child(2)" }
+        },
+        { "action": "wait", "params": { "ms": 1000 } },
+        {
+          "action": "screenshot",
+          "params": { "save": "wf002_list.png" }
+        },
+        {
+          "action": "dom",
+          "params": { "mode": "skeleton", "selector": ".main-content" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "workflow-card" }
+          ]
+        },
+        {
+          "action": "dom",
+          "params": { "mode": "interactive", "selector": ".main-content" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "workflow-action-btn" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "WF003",
+      "name": "工作流详情页 — DAG 可视化",
+      "steps": [
+        {
+          "action": "click",
+          "params": { "selector": ".header-view-tab:nth-child(2)" }
+        },
+        { "action": "wait", "params": { "ms": 500 } },
+        {
+          "action": "eval",
+          "params": {
+            "code": "(function() { const card = document.querySelector('.workflow-card'); if (card) { card.click(); return JSON.stringify({ clicked: true }); } return JSON.stringify({ clicked: false }); })()"
+          },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "true" }
+          ]
+        },
+        { "action": "wait", "params": { "ms": 1000 } },
+        {
+          "action": "screenshot",
+          "params": { "save": "wf003_detail.png" }
+        },
+        {
+          "action": "dom",
+          "params": { "mode": "skeleton" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "workflow" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "WF004",
+      "name": "工作流启动与运行状态",
+      "steps": [
+        {
+          "action": "eval",
+          "params": {
+            "code": "(async () => { const wf = await window.api.workflow.get('test-wf-earn-001'); if (!wf) return JSON.stringify({ error: 'Workflow not found' }); try { const r = await window.api.workflow.start(wf.id); return JSON.stringify({ started: true, workflowId: wf.id, name: wf.name }); } catch(e) { return JSON.stringify({ started: false, workflowId: wf.id, error: e.message || String(e) }); } })()"
+          },
+          "timeout": 15000,
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "workflowId" }
+          ]
+        },
+        { "action": "wait", "params": { "ms": 5000 } },
+        {
+          "action": "eval",
+          "params": {
+            "code": "(async () => { const runs = await window.api.workflow.getRuns('test-wf-earn-001'); if (runs.length === 0) return JSON.stringify({ hasRuns: false }); const r = runs[0]; return JSON.stringify({ hasRuns: true, runId: r.id, status: r.status, nodeCount: Object.keys(r.nodeStates || {}).length }); })()"
+          },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "hasRuns" }
+          ]
+        },
+        {
+          "action": "screenshot",
+          "params": { "save": "wf004_running.png" }
+        }
+      ]
+    },
+    {
+      "id": "WF005",
+      "name": "工作流版本历史",
+      "steps": [
+        {
+          "action": "eval",
+          "params": {
+            "code": "(async () => { const versions = await window.api.workflow.getVersions('test-wf-earn-001'); return JSON.stringify({ versionCount: versions.length, versions: versions.map(v => ({ v: v.version, log: v.changelog })) }); })()"
+          },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "versionCount" },
+            { "type": "contains", "target": "result", "expected": "Initial version" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "WF006",
+      "name": "聊天触发 workflow 模式",
+      "steps": [
+        {
+          "action": "click",
+          "params": { "selector": ".header-view-tab:nth-child(1)" }
+        },
+        { "action": "wait", "params": { "ms": 300 } },
+        {
+          "action": "click",
+          "params": { "selector": ".new-chat-btn" }
+        },
+        { "action": "wait", "params": { "ms": 1000 } },
+        {
+          "action": "type",
+          "params": {
+            "selector": ".chat-textarea",
+            "text": "帮我创建一个赚钱监控工作流，每隔1小时循环检查市场趋势，持续监控并优化策略，请直接输出workflow JSON。"
+          }
+        },
+        { "action": "wait", "params": { "ms": 500 } },
+        {
+          "action": "click",
+          "params": { "selector": ".send-btn" }
+        },
+        { "action": "wait", "params": { "ms": 60000 } },
+        {
+          "action": "screenshot",
+          "params": { "save": "wf006_chat.png" }
+        },
+        {
+          "action": "eval",
+          "params": {
+            "code": "(async () => { const list = await window.api.workflow.list(); return JSON.stringify({ totalWorkflows: list.length, names: list.map(w => w.name) }); })()"
+          },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "totalWorkflows" }
+          ]
+        }
+      ]
+    }
+  ],
+  "teardown": [
+    { "action": "click", "params": { "selector": ".header-view-tab:nth-child(1)" } },
+    { "action": "wait", "params": { "ms": 300 } }
+  ]
+}

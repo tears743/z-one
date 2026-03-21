@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "last_optimized": "2026-03-19T10:30:00Z",
+  "optimization_reason": "Trend strength 89/100 exceeds strong signal threshold (70), BUY recommendation with 85% confidence",
+  
+  "strategy_params": {
+    "position_sizing": {
+      "strategy": "gradual_buildup",
+      "initial_allocation_pct": 0.25,
+      "max_allocation_pct": 0.80,
+      "scaling_steps": 4,
+      "step_interval_hours": 24
+    },
+    "risk_management": {
+      "stop_loss_pct": 4.0,
+      "trailing_stop_enabled": true,
+      "trailing_stop_activation_pct": 6.0,
+      "trailing_stop_distance_pct": 3.5,
+      "max_daily_loss_pct": 2.0,
+      "position_max_risk_pct": 1.5
+    },
+    "entry_conditions": {
+      "min_trend_strength": 70,
+      "min_confidence_score": 0.75,
+      "current_trend_strength": 89,
+      "current_confidence": 0.85,
+      "recommendation": "BUY",
+      "volatility_adjustment": "medium"
+    },
+    "exit_conditions": {
+      "take_profit_levels": [
+        {"level": 1, "target_pct": 5, "close_pct": 0.30},
+        {"level": 2, "target_pct": 10, "close_pct": 0.40},
+        {"level": 3, "target_pct": 15, "close_pct": 0.30}
+      ],
+      "time_stop_hours": 168
+    },
+    "monitoring": {
+      "signal_refresh_interval_min": 15,
+      "trend_strength_alert_threshold": 95,
+      "confidence_drop_alert": 0.70
+    }
+  },
+  
+  "market_context": {
+    "trend_strength": 89,
+    "confidence_score": 0.85,
+    "signal_type": "STRONG_BULLISH",
+    "volatility_level": "MEDIUM"
+  }
+}

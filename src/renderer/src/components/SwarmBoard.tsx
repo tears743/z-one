@@ -10,16 +10,37 @@ interface SwarmBoardProps {
 
 const AgentCard: React.FC<{ task: SwarmTaskState }> = ({ task }) => {
   const [isFlipped, setIsFlipped] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const handleCopyLog = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const logText = [
+      `Agent: ${task.assignedTo}`,
+      `Task: ${task.description}`,
+      `Status: ${task.status}`,
+      task.output ? `\nOutput:\n${task.output}` : "",
+      (task.logs || []).length > 0 ? `\nLogs:\n${(task.logs || []).join("\n")}` : "",
+    ].filter(Boolean).join("\n");
+    navigator.clipboard.writeText(logText);
+  };
+
+  const handleExpand = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsExpanded(!isExpanded);
+  };
+
+  const cardHeight = isExpanded ? "600px" : "280px";
 
   return (
     <div
       style={{
         width: "220px",
-        height: "280px",
+        height: cardHeight,
         perspective: "1000px",
         cursor: "pointer",
         marginBottom: "10px",
         flexShrink: 0,
+        transition: "height 0.3s ease",
       }}
       onClick={() => setIsFlipped(!isFlipped)}
     >
@@ -51,7 +72,7 @@ const AgentCard: React.FC<{ task: SwarmTaskState }> = ({ task }) => {
             alignItems: "center",
             boxShadow: "var(--shadow-md)",
             color: "var(--text-primary)",
-            overflow: "hidden", // Prevent content from spilling over
+            overflow: "hidden",
           }}
         >
           <div
@@ -220,15 +241,48 @@ const AgentCard: React.FC<{ task: SwarmTaskState }> = ({ task }) => {
               paddingBottom: "4px",
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "center",
             }}
           >
             <span>EXECUTION LOG</span>
-            {task.status === "completed" && (
-              <span style={{ color: "#4caf50" }}>✓</span>
-            )}
-            {task.status === "failed" && (
-              <span style={{ color: "#f44336" }}>✗</span>
-            )}
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <button
+                onClick={handleExpand}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "4px",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  fontSize: "0.7rem",
+                  padding: "1px 5px",
+                }}
+                title={isExpanded ? "收起" : "展开全部"}
+              >
+                {isExpanded ? "▼" : "▲"}
+              </button>
+              <button
+                onClick={handleCopyLog}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "4px",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  fontSize: "0.7rem",
+                  padding: "1px 5px",
+                }}
+                title="复制日志"
+              >
+                📋
+              </button>
+              {task.status === "completed" && (
+                <span style={{ color: "#4caf50" }}>✓</span>
+              )}
+              {task.status === "failed" && (
+                <span style={{ color: "#f44336" }}>✗</span>
+              )}
+            </div>
           </div>
           <div
             style={{
@@ -251,8 +305,8 @@ const AgentCard: React.FC<{ task: SwarmTaskState }> = ({ task }) => {
                     borderRadius: "4px",
                   }}
                 >
-                  {task.output.length > 150
-                    ? task.output.substring(0, 150) + "..."
+                  {!isExpanded && task.output.length > 300
+                    ? task.output.substring(0, 300) + "..."
                     : task.output}
                 </div>
               </div>
@@ -264,7 +318,7 @@ const AgentCard: React.FC<{ task: SwarmTaskState }> = ({ task }) => {
               </span>
             )}
 
-            {task.logs.length > 0 && (
+            {(task.logs || []).length > 0 && (
               <div
                 style={{
                   marginTop: "10px",
@@ -273,10 +327,10 @@ const AgentCard: React.FC<{ task: SwarmTaskState }> = ({ task }) => {
                 }}
               >
                 <strong>Logs:</strong>
-                {task.logs.map((log, i) => (
+                {(task.logs || []).map((log, i) => (
                   <div
                     key={i}
-                    style={{ color: "var(--text-muted)", marginTop: "2px" }}
+                    style={{ color: "var(--text-muted)", marginTop: "2px", wordBreak: "break-all" }}
                   >
                     &gt; {log}
                   </div>

@@ -7,6 +7,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "cli": "electron-vite build -m main && electron out/main/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -39,6 +40,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@xyflow/react": "^12.10.1",
     "active-win": "^9.0.0",
     "anthropic-sdk": "0.0.1-security",
     "better-sqlite3": "^12.6.2",
@@ -64,11 +66,6 @@
     "xstate": "^5.26.0",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.1"
-  },
-  "optionalDependencies": {
-    "@nut-tree/nut-js": "^4.2.0",
-    "@ui-tars/operator-nut-js": "^1.2.3",
-    "@ui-tars/sdk": "^1.2.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

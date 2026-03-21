@@ -12,8 +12,9 @@ async function streamChatCompletionViaSSE(args: {
   apiKey: string;
   body: unknown;
   onChunk?: (chunk: string) => void;
+  onReasoning?: (chunk: string) => void;
   signal?: AbortSignal;
-}): Promise<string> {
+}): Promise<{ content: string; reasoning: string }> {
   const url = new URL(
     "chat/completions",
     normalizeBaseUrl(args.baseUrl),
@@ -46,6 +47,7 @@ async function streamChatCompletionViaSSE(args: {
   let buffer = "";
   let eventData: string[] = [];
   let fullContent = "";
+  let reasoningContent = "";
 
   const flushEvent = () => {
     if (eventData.length === 0) return false;
@@ -64,8 +66,8 @@ async function streamChatCompletionViaSSE(args: {
         json?.choices?.[0]?.delta?.reasoning;
 
       if (typeof reasoning === "string" && reasoning.length > 0) {
-        fullContent += reasoning;
-        args.onChunk?.(reasoning);
+        reasoningContent += reasoning;
+        args.onReasoning?.(reasoning);
       }
 
       if (typeof content === "string" && content.length > 0) {
@@ -90,7 +92,7 @@ async function streamChatCompletionViaSSE(args: {
 
       if (line === "") {
         const ended = flushEvent();
-        if (ended) return fullContent;
+        if (ended) return { content: fullContent, reasoning: reasoningContent };
         continue;
       }
 
@@ -101,7 +103,7 @@ async function streamChatCompletionViaSSE(args: {
   }
 
   flushEvent();
-  return fullContent;
+  return { content: fullContent, reasoning: reasoningContent };
 }
 
 async function generateEmbeddingOllama(
@@ -265,8 +267,9 @@ export class LLMService {
     tools?: any[],
     signal?: AbortSignal,
     jsonSchema?: { name: string; schema: object },
+    onReasoning?: (chunk: string) => void,
   ): Promise<any> {
-    return generateCompletion(messages, config, jsonMode, onChunk, tools, signal, jsonSchema);
+    return generateCompletion(messages, config, jsonMode, onChunk, tools, signal, jsonSchema, onReasoning);
   }
 }
 export interface ChatMessage {
@@ -291,6 +294,7 @@ export async function generateCompletion(
   tools?: any[],
   signal?: AbortSignal,
   jsonSchema?: { name: string; schema: object },
+  onReasoning?: (chunk: string) => void,
 ): Promise<any> {
   const baseURL = config.baseUrl;
   const apiKey = config.apiKey;
@@ -431,13 +435,16 @@ export async function generateCompletion(
 
   try {
     if (shouldStream && !hasTools) {
-      return await streamChatCompletionViaSSE({
+      const result = await streamChatCompletionViaSSE({
         baseUrl: baseURL || undefined,
         apiKey: apiKey || "dummy",
         body: params,
         onChunk,
+        onReasoning,
         signal,
       });
+      // Return content only (reasoning was already streamed via onReasoning callback)
+      return result.content;
     } else if (
       (config.provider === "lm_studio" || config.provider === "ollama") &&
       !hasTools
@@ -506,6 +513,10 @@ export async function generateCompletion(
       return message.content;
     }
   } catch (error: any) {
+    // AbortError is expected when workflow pauses — don't log as error
+    if (error?.name === "AbortError" || error?.message?.includes("aborted")) {
+      throw error;
+    }
     const errorMsg = error instanceof Error ? error.message : String(error);
     const errorDetails = error?.response?.data || error?.response || error;
     logger.error(

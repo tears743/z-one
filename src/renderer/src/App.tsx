@@ -12,6 +12,8 @@ import { ChatInput } from "./components/ChatInput";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
+import { WorkflowListPage } from "./components/WorkflowListPage";
+import { WorkflowDetailPage } from "./components/WorkflowDetailPage";
 import { loadSettings, saveSettings } from "./hooks/useSettings";
 import { loadSessions, saveCurrentSession } from "./hooks/useSessions";
 import { LogMessage } from "./types/message";
@@ -36,6 +38,8 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [currentView, setCurrentView] = useState<"chat" | "workflow">("chat");
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentSessionIdRef = useRef<string>("");
@@ -269,6 +273,48 @@ function App() {
       interactionClient.disconnect();
     };
   }, []); // Remove trans dependency to avoid re-init loop, handle trans inside callbacks if needed or use ref
+
+  // 6. Listen for workflow completion events — auto-report results to chat
+  useEffect(() => {
+    const cleanup = (window as any).api?.workflow?.onEvent?.((event: any) => {
+      if (event.type === "workflow:completed" && event.data?.outputSummary) {
+        const { workflowName, sourceSessionId, outputSummary } = event.data;
+        
+        // Build a summary message
+        const lines: string[] = [`✅ 工作流 **${workflowName || ""}** 执行完成\n`];
+        for (const [nodeName, output] of Object.entries(outputSummary)) {
+          const text = typeof output === "string" ? output : JSON.stringify(output);
+          lines.push(`**${nodeName}**: ${text}\n`);
+        }
+        
+        const summaryMsg: LogMessage = {
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          role: "assistant",
+          sender: "WorkflowEngine",
+          content: lines.join("\n"),
+          details: { isWorkflowReport: true },
+        };
+        
+        // If source session matches current session, inject directly
+        if (sourceSessionId && currentSessionIdRef.current === sourceSessionId) {
+          setMessages((prev) => [...prev, summaryMsg]);
+        } else {
+          // Inject into the source session's cached messages for later viewing
+          setSessions((prev) => prev.map((s) => {
+            if (s.id === sourceSessionId) {
+              return { ...s, messages: [...(s.messages || []), summaryMsg] };
+            }
+            return s;
+          }));
+          // Also inject into current session as a notification
+          setMessages((prev) => [...prev, summaryMsg]);
+        }
+      }
+    });
+    
+    return () => { cleanup?.(); };
+  }, []);
 
   // --- Handlers ---
 
@@ -549,27 +595,53 @@ function App() {
           onWindowCommand={handleWindowCommand}
           canControlWindow={!!(window.electron && window.electron.ipcRenderer)}
           onReconnect={() => interactionClient.reconnect()}
-        />
-
-        <MessageList
-          messages={messages}
-          messagesEndRef={messagesEndRef as React.RefObject<HTMLDivElement>}
-        />
-
-        <ChatInput
-          disabled={interactionStatus !== "connected"}
-          // Add required props for ChatInput
-          models={settings.models.filter((m) => m.enabled)}
-          activeModelId={settings.activeModelId}
-          onModelChange={(id) => {
-            const newSettings = { ...settings, activeModelId: id };
-            saveSettings(newSettings, setSettings);
+          currentView={currentView}
+          onViewChange={(view) => {
+            setCurrentView(view);
+            if (view === "workflow") {
+              setSelectedWorkflowId(null);
+              setIsSidebarOpen(false);
+            } else {
+              setIsSidebarOpen(true);
+            }
           }}
-          onSend={handleSendMessage} // Use handleSendMessage as onSend
-          onCancel={handleCancelRequest}
-          loading={isGenerating}
-          language={settings.general.language}
         />
+
+        {currentView === "workflow" ? (
+          selectedWorkflowId ? (
+            <WorkflowDetailPage
+              workflowId={selectedWorkflowId}
+              trans={trans}
+              onBack={() => setSelectedWorkflowId(null)}
+            />
+          ) : (
+            <WorkflowListPage
+              trans={trans}
+              onSelectWorkflow={(id) => setSelectedWorkflowId(id)}
+            />
+          )
+        ) : (
+          <>
+            <MessageList
+              messages={messages}
+              messagesEndRef={messagesEndRef as React.RefObject<HTMLDivElement>}
+            />
+
+            <ChatInput
+              disabled={interactionStatus !== "connected"}
+              models={settings.models.filter((m) => m.enabled)}
+              activeModelId={settings.activeModelId}
+              onModelChange={(id) => {
+                const newSettings = { ...settings, activeModelId: id };
+                saveSettings(newSettings, setSettings);
+              }}
+              onSend={handleSendMessage}
+              onCancel={handleCancelRequest}
+              loading={isGenerating}
+              language={settings.general.language}
+            />
+          </>
+        )}
       </div>
 
       <SettingsModal

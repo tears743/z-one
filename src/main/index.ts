@@ -1,6 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import { join } from "path";
+import * as path from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import { McpHub } from "./control/mcp-hub";
 import { ToolRegistry } from "./execution/tool-registry";
@@ -12,12 +13,15 @@ import { Planner } from "./intelligence/planner";
 import { AgentFactory } from "./agent/factory";
 import {
   initDB,
+  getDB,
   getAppSettings,
   saveAppSettings,
   getModels,
   saveModel,
   deleteModel,
 } from "./db";
+import { loadAllSkills } from "./skills/loader";
+import { getAllSkillHealth, setSkillEnabled, deleteSkillData } from "./skills/health-tracker";
 import { initMemoryStore } from "./memory/store";
 import {
   addMemory,
@@ -25,6 +29,10 @@ import {
   summarizeSession,
   setSettingsGetter,
 } from "./memory/manager";
+import { initWorkflowStore } from "./workflow/store";
+import { WorkflowEngine } from "./workflow/engine";
+
+import * as workflowStore from "./workflow/store";
 import { interactionManager } from "./interaction/manager";
 import { deviceManager } from "./device";
 import { cronScheduler } from "./scheduler";
@@ -72,6 +80,25 @@ app.whenReady().then(async () => {
   console.log("DB Path:", dbPath);
   initDB(dbPath);
 
+  // DB Handlers — register EARLY, before createWindow, to avoid race condition
+  // where renderer loads and calls invoke('db:get-app-settings') before handler exists
+  ipcMain.removeHandler("db:get-app-settings");
+  ipcMain.removeHandler("db:save-app-settings");
+  ipcMain.removeHandler("db:get-models");
+  ipcMain.removeHandler("db:save-model");
+  ipcMain.removeHandler("db:delete-model");
+
+  ipcMain.handle("db:get-app-settings", () => getAppSettings());
+  ipcMain.handle("db:save-app-settings", async (_, settings) => {
+    saveAppSettings(settings);
+    // deviceManager may not be initialized yet during early boot
+    try { await deviceManager.restartAll(); } catch {}
+  });
+  ipcMain.handle("db:get-models", () => getModels());
+  ipcMain.handle("db:save-model", (_, model) => saveModel(model));
+  ipcMain.handle("db:delete-model", (_, id) => deleteModel(id));
+
+
   // Initialize Memory Store
   initMemoryStore();
 
@@ -116,6 +143,22 @@ app.whenReady().then(async () => {
 
   createWindow();
 
+  // Window control buttons (minimize, maximize, close)
+  ipcMain.on("window:minimize", () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (win) win.minimize();
+  });
+  ipcMain.on("window:maximize", () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (win) {
+      win.isMaximized() ? win.unmaximize() : win.maximize();
+    }
+  });
+  ipcMain.on("window:close", () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (win) win.close();
+  });
+
   // Initialize Interaction Manager
   interactionManager.start();
 
@@ -136,6 +179,10 @@ app.whenReady().then(async () => {
   // Initialize Tool Registry
   const toolRegistry = new ToolRegistry(mcpHub);
   nativeTools.forEach((t) => toolRegistry.registerNativeTool(t));
+  
+  // Set the tool registry reference for capability discovery tools
+  const { setToolRegistry } = require("./execution/tools/native/capability-discovery");
+  setToolRegistry(toolRegistry);
 
   // Resolve paths for additional MCP servers
   // In dev (electron-vite), __dirname points to out/main
@@ -194,6 +241,38 @@ app.whenReady().then(async () => {
   // Link Interaction Manager with Planner
   interactionManager.setPlanner(planner);
 
+  // Initialize Workflow Engine
+  initWorkflowStore(getDB());
+  const workflowEngine = new WorkflowEngine(llmService, toolRegistry, agentFactory);
+  planner.setWorkflowEngine(workflowEngine);
+
+  // Write internal token to file for CLI WS auth
+  (() => {
+    try {
+      const tokenPath = path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.z-one-cli-token');
+      // Remove stale handler from previous HMR cycle
+      try { ipcMain.removeHandler('cli:get-token-path'); } catch {}
+      ipcMain.handle('cli:get-token-path', () => tokenPath);
+      // Write token to file so CLI can read without Electron
+      const token = (interactionManager as any).internalToken;
+      if (token) {
+        fs.writeFileSync(tokenPath, token, { mode: 0o600 });
+        console.log(`[CLI] Token written to ${tokenPath}`);
+      } else {
+        console.warn('[CLI] No internalToken available to write');
+      }
+    } catch (err) {
+      console.error('[CLI] Failed to write token file:', err);
+    }
+  })();
+
+  // Cleanup token file on quit
+  app.on("before-quit", () => {
+    try {
+      const tokenPath = path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.z-one-cli-token');
+      if (fs.existsSync(tokenPath)) fs.unlinkSync(tokenPath);
+    } catch {}
+  });
   // IPC Handlers Registration (Before app.whenReady to avoid race conditions with renderer)
   // MCP Handlers
   ipcMain.handle("mcp:call-tool", async (_, { serverName, toolName, args }) => {
@@ -222,23 +301,57 @@ app.whenReady().then(async () => {
   //   return await planner.createPlanFromGoal(goal, modelConfig);
   // });
 
-  // DB Handlers
-  // Ensure we remove existing handlers to avoid duplicates on hot reload
-  ipcMain.removeHandler("db:get-app-settings");
-  ipcMain.removeHandler("db:save-app-settings");
-  ipcMain.removeHandler("db:get-models");
-  ipcMain.removeHandler("db:save-model");
-  ipcMain.removeHandler("db:delete-model");
+  // ── Workflow IPC Handlers ───────────────────────────────────────────
+  ipcMain.removeHandler("workflow:list");
+  ipcMain.removeHandler("workflow:get");
+  ipcMain.removeHandler("workflow:create");
+  ipcMain.removeHandler("workflow:delete");
+  ipcMain.removeHandler("workflow:start");
+  ipcMain.removeHandler("workflow:pause");
+  ipcMain.removeHandler("workflow:resume");
+  ipcMain.removeHandler("workflow:inject-message");
+  ipcMain.removeHandler("workflow:get-run");
+  ipcMain.removeHandler("workflow:get-runs");
+  ipcMain.removeHandler("workflow:get-versions");
 
-  ipcMain.handle("db:get-app-settings", () => getAppSettings());
-  ipcMain.handle("db:save-app-settings", async (_, settings) => {
-    saveAppSettings(settings);
-    // Restart device bridges when settings change
-    await deviceManager.restartAll();
+  ipcMain.handle("workflow:list", () => workflowStore.listWorkflows());
+  ipcMain.handle("workflow:get", (_, id) => workflowStore.getWorkflow(id));
+  ipcMain.handle("workflow:create", (_, def) => workflowStore.createWorkflow(def));
+  ipcMain.handle("workflow:delete", (_, id) => { workflowStore.deleteWorkflow(id); return true; });
+  ipcMain.handle("workflow:start", async (_, { workflowId }) => {
+    const settings = getAppSettings();
+    const models = settings.models || [];
+    const modelCfg = models.find((m: any) => m.id === settings.activeModelId) || null;
+    return await workflowEngine.startWorkflow(workflowId, modelCfg);
   });
-  ipcMain.handle("db:get-models", () => getModels());
-  ipcMain.handle("db:save-model", (_, model) => saveModel(model));
-  ipcMain.handle("db:delete-model", (_, id) => deleteModel(id));
+  ipcMain.handle("workflow:pause", (_, { runId }) => {
+    workflowEngine.pauseWorkflow(runId);
+    return true;
+  });
+  ipcMain.handle("workflow:resume", async (_, { runId }) => {
+    const settings = getAppSettings();
+    const models = settings.models || [];
+    const modelCfg = models.find((m: any) => m.id === settings.activeModelId) || null;
+    await workflowEngine.resumeWorkflow(runId, modelCfg);
+    return true;
+  });
+  ipcMain.handle("workflow:inject-message", (_, { runId, nodeId, message }) => {
+    workflowEngine.injectMessage(runId, nodeId, message);
+    return true;
+  });
+  ipcMain.handle("workflow:get-run", (_, runId) => workflowStore.getRun(runId));
+  ipcMain.handle("workflow:get-runs", (_, workflowId) => workflowStore.getRunsByWorkflow(workflowId));
+  ipcMain.handle("workflow:get-versions", (_, workflowId) => workflowStore.getVersions(workflowId));
+
+  // Forward workflow events to renderer
+  workflowEngine.on("workflowEvent", (event: any) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win?.webContents) {
+      win.webContents.send("workflow:event", event);
+    }
+  });
+
+  // DB Handlers — already registered early (after initDB), no need to register again
 
   // Scheduled Tasks Handlers
   ipcMain.removeHandler("cron:list");
@@ -251,6 +364,65 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("cron:delete", (_, { id }) => {
     cronScheduler.removeTask(id);
+  });
+
+  // Skills Handlers
+  ipcMain.removeHandler("skills:list");
+  ipcMain.removeHandler("skills:toggle");
+  ipcMain.removeHandler("skills:delete");
+
+  ipcMain.handle("skills:list", () => {
+    try {
+      const appSettings = getAppSettings();
+      const workspacePath = appSettings?.general?.agentWorkspace || path.join(process.cwd(), "workspace");
+      const skills = loadAllSkills(workspacePath);
+      const healthData = getAllSkillHealth();
+
+      // Merge health data into skills
+      return skills.map((skill: any) => {
+        const health = healthData.find((h: any) => h.name === skill.name);
+        return {
+          name: skill.name,
+          description: skill.description,
+          status: skill.status,
+          enabled: skill.enabled,
+          version: skill.metadata?.version,
+          author: skill.metadata?.author,
+          totalCalls: health?.totalCalls || 0,
+          failedCalls: health?.failedCalls || 0,
+          failureRate: health?.failureRate || 0,
+          lastUsed: health?.lastUsed || 0,
+        };
+      });
+    } catch (e: any) {
+      console.error("Failed to list skills:", e);
+      return [];
+    }
+  });
+
+  ipcMain.handle("skills:toggle", (_, { name, enabled }) => {
+    try {
+      setSkillEnabled(name, enabled);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle("skills:delete", (_, { name }) => {
+    try {
+      const appSettings = getAppSettings();
+      const workspacePath = appSettings?.general?.agentWorkspace || path.join(process.cwd(), "workspace");
+      const skillDir = path.join(workspacePath, "skills", name);
+
+      if (fs.existsSync(skillDir)) {
+        fs.rmSync(skillDir, { recursive: true, force: true });
+      }
+      deleteSkillData(name);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
   });
 
   // Memory Handlers

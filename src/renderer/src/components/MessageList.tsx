@@ -113,7 +113,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     }
 
     // Split content by thinking blocks
-    const lines = msg.content.split("\n");
+    const contentStr = typeof msg.content === "string" ? msg.content : (msg.content ? JSON.stringify(msg.content) : "");
+    const lines = contentStr.split("\n");
     const thoughtLines: string[] = [];
     const contentLines: string[] = [];
 

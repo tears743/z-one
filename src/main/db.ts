@@ -4,11 +4,18 @@ import {
   DEFAULT_SETTINGS,
   ModelConfig,
 } from "../renderer/src/types/settings";
+import { initHealthTracker } from "./skills/health-tracker";
 
 let db: Database.Database;
 
+export function getDB(): Database.Database {
+  if (!db) throw new Error("DB not initialized. Call initDB first.");
+  return db;
+}
+
 export function initDB(path: string) {
   db = new Database(path);
+
 
   // Create generic settings table (key-value store)
   db.exec(`
@@ -122,6 +129,9 @@ export function initDB(path: string) {
       console.error("Migration failed:", e);
     }
   }
+
+  // Initialize the skill health tracker with DB reference
+  initHealthTracker(db);
 }
 
 // === Generic Settings API ===
@@ -145,6 +155,8 @@ export function getAppSettings(): AppSettings {
     ),
     language: getSetting("general_language", DEFAULT_SETTINGS.general.language),
     agentWorkspace: getSetting("general_agentWorkspace", undefined),
+    requirePlanApproval: getSetting("general_requirePlanApproval", true),
+    maxAgentSteps: getSetting("general_maxAgentSteps", 15),
   };
 
   const activeModelId = getSetting(
@@ -199,6 +211,14 @@ export function saveAppSettings(settings: AppSettings) {
     insertSetting.run(
       "general_agentWorkspace",
       JSON.stringify(settings.general.agentWorkspace),
+    );
+    insertSetting.run(
+      "general_requirePlanApproval",
+      JSON.stringify(settings.general.requirePlanApproval ?? false),
+    );
+    insertSetting.run(
+      "general_maxAgentSteps",
+      JSON.stringify(settings.general.maxAgentSteps ?? 15),
     );
     insertSetting.run(
       "active_model_id",

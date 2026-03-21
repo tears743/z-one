@@ -8,20 +8,12 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { PeekabooFactory, ElementRegistry } from "../tools/peekaboo/index";
 
-// We use nut.js for interactions
+// nut.js has been removed — mouse/keyboard actions are stubs
 let mouse: any, straightTo: any, Point: any, keyboard: any, Key: any;
 
 async function initNutJs() {
-  try {
-    const nut = await import("@nut-tree/nut-js");
-    mouse = nut.mouse;
-    straightTo = nut.straightTo;
-    Point = nut.Point;
-    keyboard = nut.keyboard;
-    Key = nut.Key;
-  } catch (e) {
-    console.error("Failed to load nut.js:", e);
-  }
+  // @nut-tree/nut-js removed — click/type operations will not work
+  console.warn("[desktop-mcp] @nut-tree/nut-js is not installed. Mouse/keyboard tools will not work.");
 }
 
 // Create server instance

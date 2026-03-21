@@ -1,0 +1,145 @@
+{
+  "name": "Z-One 核心功能测试",
+  "description": "验证应用核心能力：启动渲染、导航、设置系统、聊天输入、工作流列表",
+  "setup": [
+    { "action": "wait", "params": { "ms": 1000 } }
+  ],
+  "cases": [
+    {
+      "id": "TC001",
+      "name": "应用启动 — 主界面渲染完整",
+      "steps": [
+        {
+          "action": "screenshot",
+          "params": { "save": "tc001_startup.png" }
+        },
+        {
+          "action": "dom",
+          "params": { "mode": "skeleton" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "sidebar" },
+            { "type": "contains", "target": "result", "expected": "main-content" }
+          ]
+        },
+        {
+          "action": "state",
+          "params": {},
+          "assert": [
+            { "type": "exists", "target": "settings", "expected": true }
+          ]
+        },
+        {
+          "action": "window",
+          "params": {},
+          "assert": [
+            { "type": "exists", "target": "bounds", "expected": true }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "TC002",
+      "name": "聊天系统 — 输入框与消息区就绪",
+      "steps": [
+        {
+          "action": "dom",
+          "params": { "mode": "interactive", "selector": ".main-content" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "textarea" }
+          ]
+        },
+        {
+          "action": "dom_element",
+          "params": { "selector": "textarea" },
+          "assert": [
+            { "type": "exists", "target": "tag", "expected": true }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "TC003",
+      "name": "导航系统 — Chat/Workflow 切换",
+      "steps": [
+        {
+          "action": "click",
+          "params": { "selector": ".header-view-tab:nth-child(2)" }
+        },
+        { "action": "wait", "params": { "ms": 500 } },
+        {
+          "action": "dom",
+          "params": { "mode": "skeleton", "selector": ".main-content" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "workflow" }
+          ]
+        },
+        {
+          "action": "screenshot",
+          "params": { "save": "tc003_workflow_tab.png" }
+        },
+        {
+          "action": "click",
+          "params": { "selector": ".header-view-tab:nth-child(1)" }
+        },
+        { "action": "wait", "params": { "ms": 500 } },
+        {
+          "action": "dom",
+          "params": { "mode": "interactive", "selector": ".main-content" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "textarea" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "TC004",
+      "name": "设置系统 — 打开/验证/关闭",
+      "steps": [
+        {
+          "action": "click",
+          "params": { "selector": ".window-controls > button:nth-child(1)" }
+        },
+        { "action": "wait", "params": { "ms": 500 } },
+        {
+          "action": "dom",
+          "params": { "mode": "skeleton" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "modal-overlay" }
+          ]
+        },
+        {
+          "action": "screenshot",
+          "params": { "save": "tc004_settings.png" }
+        },
+        {
+          "action": "state",
+          "params": {},
+          "assert": [
+            { "type": "exists", "target": "settings", "expected": true }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "TC005",
+      "name": "应用标题栏 — 元素完整",
+      "steps": [
+        {
+          "action": "dom_element",
+          "params": { "selector": ".header-title" },
+          "assert": [
+            { "type": "exists", "target": "tag", "expected": true },
+            { "type": "contains", "target": "result", "expected": "text" }
+          ]
+        },
+        {
+          "action": "dom",
+          "params": { "mode": "skeleton", "selector": ".app-header" },
+          "assert": [
+            { "type": "contains", "target": "result", "expected": "icon-btn" }
+          ]
+        }
+      ]
+    }
+  ]
+}

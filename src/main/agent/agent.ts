@@ -51,7 +51,16 @@ export class Agent {
     await this.compressHistoryIfNeeded();
 
     let steps = 0;
-    const MAX_STEPS = 10;
+    // Read max steps from settings (default: 15, 0 = unlimited)
+    let MAX_STEPS = 15;
+    try {
+      const { getAppSettings } = await import("../db");
+      const settings = getAppSettings();
+      const configured = settings?.general?.maxAgentSteps;
+      MAX_STEPS = configured === 0 ? Number.MAX_SAFE_INTEGER : (configured || 15);
+    } catch (e) {
+      // Fallback to default if DB not ready
+    }
     let finalAnswer = "";
 
     // Prepare Tools
@@ -73,7 +82,7 @@ export class Agent {
 
       try {
         // 1. Prepare messages for LLM
-        const messages: ChatMessage[] = this.history.map((m) => {
+        const messages: ChatMessage[] = this.sanitizeHistory().map((m) => {
           const base: any = {
             role: m.role,
             content: m.content as any, // Cast for compatibility with ChatMessage
@@ -110,6 +119,11 @@ export class Agent {
           },
           useNativeTools ? tools : undefined,
           signal,
+          undefined, // jsonSchema
+          (reasoningChunk) => {
+            // Stream reasoning as thought steps (collapsed in UI)
+            if (onStep) onStep(reasoningChunk);
+          },
         );
 
         if (!response) {
@@ -139,6 +153,15 @@ export class Agent {
             // Check abort before each tool call
             if (signal?.aborted) {
               logger.info(`[Agent] Aborted before tool: ${toolCall.function.name}`);
+              // Add placeholder responses for ALL remaining tool_calls to keep history valid
+              for (let i = toolCalls.indexOf(toolCall); i < toolCalls.length; i++) {
+                this.history.push({
+                  role: "tool",
+                  tool_call_id: toolCalls[i].id,
+                  name: toolCalls[i].function.name,
+                  content: "[Aborted]",
+                });
+              }
               return finalAnswer || "[Task aborted]";
             }
 
@@ -166,6 +189,7 @@ export class Agent {
               const toolPromise = this.toolRegistry.callTool(
                 functionName,
                 args,
+                { agentId: this.config.name },
               );
 
               let result: any;
@@ -186,6 +210,21 @@ export class Agent {
             } catch (e: any) {
               if (signal?.aborted) {
                 logger.info(`[Agent] Tool ${functionName} aborted`);
+                // Add this tool response + placeholders for remaining tool_calls
+                this.history.push({
+                  role: "tool",
+                  tool_call_id: toolCallId,
+                  name: functionName,
+                  content: "[Aborted]",
+                });
+                for (let i = toolCalls.indexOf(toolCall) + 1; i < toolCalls.length; i++) {
+                  this.history.push({
+                    role: "tool",
+                    tool_call_id: toolCalls[i].id,
+                    name: toolCalls[i].function.name,
+                    content: "[Aborted]",
+                  });
+                }
                 return finalAnswer || "[Task aborted]";
               }
               resultStr = `Error: ${e.message}`;
@@ -309,6 +348,7 @@ export class Agent {
             const result = await this.toolRegistry.callTool(
               parsed.action,
               parsed.args || {},
+              { agentId: this.config.name },
             );
             const resultStr =
               typeof result === "string" ? result : JSON.stringify(result);
@@ -342,6 +382,11 @@ export class Agent {
           return finalAnswer;
         }
       } catch (e: any) {
+        // AbortError is expected when workflow is paused — don't log as failure
+        if (e.name === "AbortError" || e.message?.includes("aborted")) {
+          this.state.status = "idle";
+          throw e;
+        }
         this.state.status = "failed";
         logger.error(`Agent ${this.config.name} failed:`, e);
         throw e;
@@ -377,7 +422,7 @@ export class Agent {
 
     this.state.status = "acting";
     try {
-      const result = await this.toolRegistry.callTool(toolName, args);
+      const result = await this.toolRegistry.callTool(toolName, args, { agentId: this.config.name });
       this.state.status = "idle";
       return result;
     } catch (e) {
@@ -392,6 +437,45 @@ export class Agent {
 
   public getHistory(): AgentMessage[] {
     return this.history;
+  }
+
+  /**
+   * Ensure every assistant message with tool_calls has matching tool responses.
+   * Returns a sanitized copy of history safe to send to LLM APIs.
+   */
+  private sanitizeHistory(): AgentMessage[] {
+    const sanitized: AgentMessage[] = [];
+    for (let i = 0; i < this.history.length; i++) {
+      const msg = this.history[i];
+      sanitized.push(msg);
+
+      if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+        // Collect all tool_call_ids that need responses
+        const expectedIds = new Set(msg.tool_calls.map((tc: any) => tc.id));
+
+        // Check subsequent messages for matching tool responses
+        let j = i + 1;
+        while (j < this.history.length && this.history[j].role === "tool") {
+          expectedIds.delete(this.history[j].tool_call_id);
+          j++;
+        }
+
+        // Add placeholder responses for any missing tool_call_ids
+        for (const missingId of expectedIds) {
+          const tc = msg.tool_calls.find((t: any) => t.id === missingId);
+          const placeholder: AgentMessage = {
+            role: "tool",
+            tool_call_id: missingId,
+            name: tc?.function?.name || "unknown",
+            content: "[No response recorded]",
+          };
+          // Insert into actual history too so subsequent calls are consistent
+          const insertIdx = sanitized.length;
+          sanitized.splice(insertIdx, 0, placeholder);
+        }
+      }
+    }
+    return sanitized;
   }
 
   /**

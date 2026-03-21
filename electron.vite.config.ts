@@ -6,13 +6,10 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
-        external: [
-          "@nut-tree/nut-js",
-          "@ui-tars/sdk",
-          "@ui-tars/operator-nut-js",
-        ],
+        external: [],
         input: {
           index: resolve(__dirname, "src/main/index.ts"),
+          cli: resolve(__dirname, "src/main/cli.ts"),
           "desktop-mcp": resolve(
             __dirname,
             "src/main/execution/servers/desktop-mcp.ts",

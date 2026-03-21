@@ -1,0 +1,78 @@
+{
+  "exchange_info": {
+    "name": "COMEX",
+    "division_of": "CME Group",
+    "location": "New York"
+  },
+  "instrument_type": "Gold Futures",
+  "pricing": {
+    "currency_code": "USD",
+    "price_unit": "per_troy_oz"
+  },
+  "quotes": [
+    {
+      "ticker": "GC",
+      "contract_code": "GCJ25",
+      "maturity": "2025-04",
+      "trade_timestamp": "2025-03-17T20:30:00Z",
+      "ohlc": {
+        "o": 3026.0,
+        "h": 3049.2,
+        "l": 3018.5,
+        "c": 3042.8
+      },
+      "settlement_price": 3043.2,
+      "vol": 152340,
+      "oi": 458920
+    },
+    {
+      "ticker": "GC",
+      "contract_code": "GCM25",
+      "maturity": "2025-06",
+      "trade_timestamp": "2025-03-17T20:30:00Z",
+      "ohlc": {
+        "o": 3050.5,
+        "h": 3076.0,
+        "l": 3045.2,
+        "c": 3068.5
+      },
+      "settlement_price": 3069.3,
+      "vol": 103450,
+      "oi": 331200
+    },
+    {
+      "ticker": "GC",
+      "contract_code": "GCQ25",
+      "maturity": "2025-08",
+      "trade_timestamp": "2025-03-17T20:30:00Z",
+      "ohlc": {
+        "o": 3075.2,
+        "h": 3098.5,
+        "l": 3070.3,
+        "c": 3090.8
+      },
+      "settlement_price": 3091.4,
+      "vol": 47890,
+      "oi": 192340
+    },
+    {
+      "ticker": "GC",
+      "contract_code": "GCV25",
+      "maturity": "2025-10",
+      "trade_timestamp": "2025-03-17T20:30:00Z",
+      "ohlc": {
+        "o": 3095.0,
+        "h": 3120.0,
+        "l": 3090.0,
+        "c": 3110.0
+      },
+      "settlement_price": 3111.0,
+      "vol": 21340,
+      "oi": 87650
+    }
+  ],
+  "specs": {
+    "contract_multiplier": 100,
+    "min_fluctuation": 0.1
+  }
+}

@@ -1,0 +1,153 @@
+# InstantMesh Requirements - macOS ARM64 (Apple Silicon) 兼容版本
+# 原始 requirements.txt 的修改版本，移除 CUDA 专用依赖
+# 
+# 生成日期: 2026-03-18
+# 适用平台: macOS ARM64 (Apple Silicon M1/M2/M3)
+# Python 版本: 3.9+
+#
+# ⚠️ 重要说明:
+# 1. 移除了 nvdiffrast (NVIDIA CUDA 专用库，不支持 Apple Silicon)
+# 2. 移除了 bitsandbytes (不完全支持 Apple Silicon)
+# 3. 使用 PyTorch MPS 后端替代 CUDA
+# 4. 纹理贴图功能将不可用，只能使用顶点颜色
+
+###############################################################################
+# 核心依赖 - 支持 ARM64
+###############################################################################
+
+# PyTorch - 使用 MPS 后端 (Metal Performance Shaders)
+# 安装命令: pip install torch torchvision torchaudio
+# 验证 MPS: python -c "import torch; print(torch.backends.mps.is_available())"
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# PyTorch Lightning - 支持 MPS
+pytorch-lightning==2.1.2
+
+# 深度学习相关 - 全部支持 ARM64
+einops>=0.7.0
+omegaconf>=2.3.0
+torchmetrics>=1.0.0
+accelerate>=0.20.0
+tensorboard>=2.13.0
+
+# HuggingFace 生态系统 - 支持 ARM64
+huggingface-hub>=0.16.0
+transformers==4.34.1
+diffusers==0.20.2
+
+# 图像处理 - 支持 ARM64
+Pillow>=10.0.0
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.8
+opencv-python>=4.8.0
+
+# 3D 网格处理 - 支持 ARM64
+PyMCubes>=0.1.4
+trimesh>=3.23.0
+xatlas>=0.0.7
+plyfile>=0.9
+
+# 背景移除 - 支持 ARM64
+rembg>=2.0.50
+
+# Web 数据集 - 支持 ARM64
+webdataset>=0.2.48
+
+# Gradio Web UI - 支持 ARM64
+gradio==3.41.2
+
+# 其他工具 - 支持 ARM64
+tqdm>=4.65.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+###############################################################################
+# ⚠️ 移除的依赖项 (ARM64 不兼容)
+###############################################################################
+
+# ❌ nvdiffrast - NVIDIA CUDA 专用光栅化库
+# 原因: 仅支持 NVIDIA GPU，使用 CUDA 内核
+# 影响: 纹理贴图导出功能不可用
+# 替代方案: 使用顶点颜色导出，或尝试 PyTorch3D
+# git+https://github.com/NVlabs/nvdiffrast/
+
+# ❌ bitsandbytes - 量化和优化库
+# 原因: 不完全支持 Apple Silicon，部分功能依赖 CUDA
+# 影响: 模型量化功能可能受限
+# 替代方案: 使用 PyTorch 原生量化或删除相关代码
+# bitsandbytes
+
+###############################################################################
+# 可选依赖 - 用于增强功能
+###############################################################################
+
+# PyTorch3D - 可选的 nvdiffrast 替代品
+# 注意: 需要从源码编译或使用 conda 安装
+# conda install pytorch3d -c pytorch3d
+# 或: pip install "git+https://github.com/facebookresearch/pytorch3d.git"
+# pytorch3d
+
+# onnxruntime-silicon - 用于 ONNX 模型推理优化
+# 专为 Apple Silicon 优化的 ONNX Runtime
+# onnxruntime-silicon
+
+###############################################################################
+# 安装说明
+###############################################################################
+
+# 1. 创建虚拟环境
+# python -m venv venv
+# source venv/bin/activate
+
+# 2. 安装 PyTorch (MPS 版本)
+# pip install torch torchvision torchaudio
+
+# 3. 安装其他依赖
+# pip install -r requirements_macos_arm64.txt
+
+# 4. 验证安装
+# python -c "import torch; print('MPS available:', torch.backends.mps.is_available())"
+
+###############################################################################
+# 代码修改要求
+###############################################################################
+
+# 在运行前，需要修改以下文件中的设备选择代码:
+#
+# 1. run.py (Line 83):
+#    修改: device = torch.device('cuda')
+#    改为: device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+#
+# 2. app.py (Lines 30-37, 75):
+#    修改: torch.cuda.is_available() 检查
+#    改为: 包含 torch.backends.mps.is_available() 的多分支判断
+#
+# 3. src/model_mesh.py (Line 78):
+#    修改: device = torch.device(f'cuda:{self.global_rank}')
+#    改为: 条件判断使用 mps/cpu
+#
+# 4. 移除/禁用纹理贴图相关代码 (使用 nvdiffrast 的部分)
+
+###############################################################################
+# 性能注意事项
+###############################################################################
+
+# 1. MPS 后端目前不支持所有 PyTorch 操作
+#    某些操作可能会自动回退到 CPU
+#
+# 2. 内存管理:
+#    - Apple Silicon 使用统一内存架构
+#    - 设置环境变量: export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.8
+#
+# 3. 预期性能:
+#    - 相比 NVIDIA RTX 4090: 慢 2.5-3.5x
+#    - 但完全可用于开发和原型设计
+#
+# 4. 已知 MPS 限制:
+#    - 某些 float64 操作不支持
+#    - 某些复杂索引操作可能失败
+#    - 如果遇到问题，可设置: export PYTORCH_ENABLE_MPS_FALLBACK=1
+
+###############################################################################

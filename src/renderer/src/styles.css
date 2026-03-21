@@ -246,6 +246,41 @@ html, body, #root {
   user-select: none;
 }
 
+.header-view-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.header-view-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.header-view-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.header-view-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
 .icon-btn {
   background: none;
   border: none;
@@ -801,4 +836,714 @@ html, body, #root {
   max-width: 100%;
   box-sizing: content-box;
   background-color: var(--bg-primary);
+}
+
+/* ─── Sidebar Tabs ───────────────────────────────────────────────────── */
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.sidebar-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.sidebar-tab:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.sidebar-tab.active {
+  color: var(--accent-color);
+  border-bottom-color: var(--accent-color);
+}
+
+/* ─── Workflow List Page ─────────────────────────────────────────────── */
+
+.workflow-list-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+}
+
+.workflow-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-lg);
+}
+
+.workflow-list-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.workflow-list-title h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.workflow-refresh-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+
+.workflow-refresh-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.workflow-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: var(--text-muted);
+  gap: var(--spacing-md);
+}
+
+.workflow-empty p {
+  font-size: 0.95rem;
+}
+
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.workflow-card {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.workflow-card:hover {
+  border-color: var(--accent-color);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.workflow-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.workflow-card-name {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-card-version {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background-color: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.workflow-card-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-card-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-card-sep {
+  opacity: 0.5;
+}
+
+.workflow-card-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.workflow-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.workflow-card:hover .workflow-card-actions {
+  opacity: 1;
+}
+
+.workflow-action-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  transition: all 0.15s;
+}
+
+.workflow-action-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.workflow-action-btn.start:hover {
+  color: #22c55e;
+  border-color: #22c55e;
+}
+
+.workflow-action-btn.delete:hover {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+/* ─── Workflow Detail Page ────────────────────────────────────────────── */
+
+.workflow-detail-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+}
+
+.workflow-detail-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.workflow-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.workflow-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.workflow-back-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.workflow-detail-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.workflow-detail-title h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.workflow-detail-version {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background-color: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.workflow-start-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background-color: var(--accent-color);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: filter 0.2s;
+}
+
+.workflow-start-btn:hover {
+  filter: brightness(1.15);
+}
+
+.workflow-detail-desc {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 var(--spacing-lg) 0;
+}
+
+.workflow-section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.workflow-section h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+/* ─── React Flow DAG Flowchart ───────────────────────────────────────── */
+
+.wf-detail-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding: 0 !important;
+}
+
+.wf-detail-layout .workflow-detail-header {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.wf-canvas-container {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.wf-canvas-container .react-flow__node {
+  cursor: pointer;
+}
+
+/* ─── Custom Flow Nodes ─────────────────────────────────────────────── */
+
+.wf-node {
+  min-width: 140px;
+  max-width: 220px;
+  padding: 10px 16px;
+  border: 2px solid var(--border-color);
+  background: var(--bg-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.wf-node:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  transform: translateY(-1px);
+}
+
+.wf-node-task {
+  border-radius: 10px;
+}
+
+.wf-node-condition {
+  border-radius: 4px;
+  transform: rotate(0deg);
+  border-style: dashed;
+  border-width: 2px;
+}
+
+.wf-node-loop {
+  border-radius: 10px;
+  border-style: dashed;
+}
+
+.wf-node-gateway {
+  border-radius: 50%;
+  min-width: auto;
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.wf-node-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wf-node-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.wf-node-badge {
+  font-size: 0.65rem;
+  background: var(--accent-color);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.wf-handle {
+  width: 8px !important;
+  height: 8px !important;
+  background: var(--border-color) !important;
+  border: 2px solid var(--bg-secondary) !important;
+}
+
+/* ─── Node Status Animations ────────────────────────────────────────── */
+
+@keyframes wf-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(59,130,246,0); }
+}
+
+.wf-node-pulse {
+  animation: wf-pulse 2s ease-in-out infinite;
+}
+
+@keyframes wf-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.wf-spin {
+  animation: wf-spin 1.2s linear infinite;
+}
+
+/* ─── React Flow Overrides ──────────────────────────────────────────── */
+
+.react-flow__background {
+  background-color: var(--bg-primary) !important;
+}
+
+.react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.react-flow__controls-button {
+  background: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-secondary) !important;
+  fill: var(--text-secondary) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--bg-hover) !important;
+}
+
+.react-flow__minimap {
+  border-radius: var(--radius-sm) !important;
+}
+
+.react-flow__edge-text {
+  font-size: 11px !important;
+}
+
+/* ─── Bottom Panel ──────────────────────────────────────────────────── */
+
+.wf-bottom-panel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  height: 36px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-bottom-panel.wf-panel-open {
+  overflow-y: auto;
+}
+
+.wf-panel-drag-bar {
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.wf-panel-drag-bar:hover,
+.wf-panel-drag-bar.wf-dragging {
+  background: var(--accent-color);
+}
+
+.wf-panel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--spacing-lg);
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.wf-panel-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.wf-panel-content {
+  padding: 0 var(--spacing-lg) var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.wf-panel-section h4 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 0 0 var(--spacing-xs) 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ─── Run Chips ─────────────────────────────────────────────────────── */
+
+.wf-runs-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wf-run-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.wf-run-chip:hover {
+  background: var(--bg-hover);
+}
+
+.wf-run-chip.active {
+  border-width: 2px;
+  background: var(--bg-primary);
+}
+
+.wf-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wf-run-time {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: sans-serif;
+}
+
+.wf-run-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.wf-run-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* ─── Node Detail Panel ─────────────────────────────────────────────── */
+
+.wf-node-detail-panel {
+  border-top: 1px solid var(--border-color);
+  padding-top: var(--spacing-sm);
+}
+
+.wf-detail-field {
+  margin-bottom: var(--spacing-xs);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.wf-detail-field strong {
+  color: var(--text-primary);
+  margin-right: 4px;
+}
+
+.wf-detail-field pre {
+  margin: 4px 0 0 0;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.wf-detail-field code {
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+}
+
+.wf-logs {
+  overflow-y: auto;
+  margin-top: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.wf-log-line {
+  font-size: 0.7rem;
+  font-family: monospace;
+  color: var(--text-muted);
+  padding: 1px 0;
+}
+
+.wf-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.wf-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.wf-tag-suggested {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.wf-inject-row {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--spacing-xs);
+}
+
+.wf-inject-row input {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.wf-inject-row input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.wf-inject-row button {
+  padding: 5px 10px;
+  background: var(--accent-color);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.workflow-empty-text {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────── */
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
 }

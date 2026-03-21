@@ -38,10 +38,10 @@ export class TeamOrchestrator {
     logCallback?: (content: string) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<string> {
-    // 1. Tool Discovery
-    const tools = await this.toolRegistry.getAllTools();
-    const toolsDesc = tools
-      .map((t) => `- ${t.name}: ${t.description}`)
+    // 1. Tool Discovery — compact summaries for planning prompt (no schemas)
+    const allTools = await this.toolRegistry.getAllTools();
+    const toolsDesc = allTools
+      .map((t) => `- ${t.name}: ${(t.description || "").substring(0, 80)}`)
       .join("\n");
 
     // 2. Leadership Planning
@@ -130,6 +130,90 @@ export class TeamOrchestrator {
     logger.info("Team Plan:", plan);
     if (onStatus) onStatus(`Strategy: ${plan.thoughts.substring(0, 150)}...`);
 
+    // Plan Approval Check
+    const appSettings = getAppSettings();
+    if (appSettings?.general?.requirePlanApproval) {
+      if (onStatus) onStatus("📋 等待用户确认计划...");
+
+      // Broadcast swarmState BEFORE approval so the SwarmBoard card renders
+      if (onSwarmEvent) {
+        const previewState = {
+          stages: plan.mission.map((stage) => ({
+            id: stage.name,
+            name: stage.name,
+            tasks: stage.tasks.map((task) => {
+              const agentRole = plan.roster.find((r) => r.name === task.assignedTo);
+              return {
+                id: task.id,
+                assignedTo: task.assignedTo,
+                description: task.description,
+                status: "pending",
+                tools: agentRole?.tools || [],
+              };
+            }),
+          })),
+        };
+        onSwarmEvent(previewState);
+      }
+
+      // Build plan summary for user review
+      const planSummary = this.formatPlanForApproval(plan);
+
+      // Use userInteractionBridge to ask for approval
+      const { userInteractionBridge } = await import("../execution/tools/native/user-interaction");
+      const approvalRequestId = `plan-approval-${Date.now()}`;
+      const deviceId = "unknown";
+
+      // Track pending approval so InteractionManager can intercept user messages
+      (userInteractionBridge as any).pendingApprovalId = approvalRequestId;
+
+      // Emit ask_user event with the plan
+      userInteractionBridge.emit("ask_user", {
+        requestId: approvalRequestId,
+        deviceId,
+        message: planSummary,
+        waitForReply: true,
+      });
+
+      // Wait for approval (5 minute timeout)
+      const approval = await new Promise<string>((resolve) => {
+        const timer = setTimeout(() => {
+          userInteractionBridge.removeAllListeners(`user_reply:${deviceId}:${approvalRequestId}`);
+          resolve("timeout");
+        }, 5 * 60 * 1000);
+
+        // Listen on all possible device IDs (broadcast pattern)
+        const handler = (reply: any) => {
+          clearTimeout(timer);
+          // reply may be a string or {content: string, images: []} from web client
+          const text = typeof reply === "string" ? reply : (reply?.content || String(reply));
+          resolve(text.trim().toLowerCase());
+        };
+
+        userInteractionBridge.once(`user_reply:${deviceId}:${approvalRequestId}`, handler);
+
+        // Also listen for any device reply pattern
+        userInteractionBridge.once(`plan_approval:${approvalRequestId}`, handler);
+      });
+
+      const isApproved = ["确认", "approve", "yes", "ok", "y", "同意", "执行"].includes(approval);
+
+      // Clear pending approval tracking
+      (userInteractionBridge as any).pendingApprovalId = null;
+
+      if (!isApproved) {
+        if (approval === "timeout") {
+          if (onStatus) onStatus("⏰ 等待超时，计划已取消");
+          logger.info("[TeamOrchestrator] Plan approval timed out, cancelling");
+          return "计划等待确认超时，已自动取消。请重新发送指令。";
+        }
+        if (onStatus) onStatus("❌ 计划已被用户拒绝");
+        return `计划已被用户拒绝。用户回复: "${approval}"`;
+      }
+
+      if (onStatus) onStatus("✅ 计划已确认，开始执行...");
+    }
+
     // Helper to broadcast state
     const broadcastState = () => {
       if (onSwarmEvent) {
@@ -167,15 +251,21 @@ export class TeamOrchestrator {
     broadcastState();
 
     for (const member of plan.roster) {
-      // Log tool assignment for verification
-      logger.info(`Agent ${member.name} assigned tools:`, member.tools);
+      // Inject capability discovery meta-tools so each agent can discover more tools
+      const discoveryTools = ["list_capabilities", "get_capability_detail"];
+      const agentToolNames = [...new Set([...member.tools, ...discoveryTools])];
 
-      // Create specialized agent
+      // Only pass tool definitions the agent actually needs (not full registry)
+      const agentToolDefs = allTools.filter((t) => agentToolNames.includes(t.name));
+
+      logger.info(`Agent ${member.name} assigned tools: ${agentToolNames.join(", ")}`);
+
+      // Create specialized agent with discovery capability
       const agent = this.agentFactory.createCustomAgent(
         member.name,
-        member.persona, // Use the full persona as description/prompt base
-        member.tools,
-        tools, // Pass all tools for prompt generation
+        member.persona + `\n\n**Tool Discovery:** If you need tools beyond your assigned set, call \`list_capabilities\` to discover all available tools, then \`get_capability_detail\` to get their schema.\n\n**Output Requirement:** When you finish your task, provide a clear, structured summary of your findings/results. This summary will be passed to other team members in subsequent stages. Include key data, file paths, URLs, and any actionable information.`,
+        agentToolNames,
+        agentToolDefs,
         context, // memoryContext
         modelConfig, // Pass model config for legacy tooling check
       );
@@ -189,7 +279,8 @@ export class TeamOrchestrator {
 
     // 4. Mission Execution
     const results: string[] = [];
-    const executionLog: string[] = [];
+    // Structured map of all completed task outputs: taskId -> { agent, description, output }
+    const completedTaskOutputs: Map<string, { agent: string; description: string; output: string }> = new Map();
 
     // Ensure progress directory exists in workspace
     const settings = getAppSettings();
@@ -208,6 +299,15 @@ export class TeamOrchestrator {
       // Check abort before each stage
       if (signal?.aborted) {
         logger.info(`[TeamOrchestrator] Execution aborted before stage: ${stage.name}`);
+        // Mark all tasks in this stage and remaining stages as cancelled
+        for (const s of plan.mission) {
+          for (const t of s.tasks) {
+            if (!(t as any).status || (t as any).status === "pending" || (t as any).status === "running") {
+              (t as any).status = "cancelled";
+            }
+          }
+        }
+        broadcastState();
         break;
       }
       if (onStatus) onStatus(`Starting Stage: ${stage.name}`);
@@ -244,10 +344,17 @@ export class TeamOrchestrator {
         );
 
         try {
-          // Provide context from previous tasks if needed
+          // Provide context from previous stages' results
           let taskInput = task.description;
-          if (executionLog.length > 0) {
-            taskInput += `\n\n[Shared Team Context (Previous Results)]:\n${executionLog.slice(-3).join("\n")}`;
+          if (completedTaskOutputs.size > 0) {
+            const contextParts: string[] = [];
+            for (const [taskId, info] of completedTaskOutputs) {
+              const truncatedOutput = info.output.length > 800
+                ? info.output.substring(0, 800) + "... [truncated]"
+                : info.output;
+              contextParts.push(`=== ${taskId} (${info.agent}) ===\nTask: ${info.description}\nResult:\n${truncatedOutput}`);
+            }
+            taskInput += `\n\n[Previous Stage Results — use this data to complete your task]:\n${contextParts.join("\n\n")}`;
           }
 
           // Initialize logs array if not present
@@ -299,13 +406,26 @@ export class TeamOrchestrator {
             (task as any)._logBuffer = "";
           }
 
-          const output = `[${task.assignedTo}]: ${result}`;
+          // After agent finishes, re-check abort: if aborted, override status to cancelled
+          if (signal?.aborted) {
+            (task as any).status = "cancelled";
+            broadcastState();
+            return `[${task.assignedTo}] Task cancelled (signal aborted during execution)`;
+          }
+
           logger.info(`Task Complete: ${task.id}`);
 
           // Update status and broadcast
           (task as any).status = "completed";
           (task as any).output = result;
           broadcastState();
+
+          // Store structured output for cross-stage passing
+          completedTaskOutputs.set(task.id, {
+            agent: task.assignedTo,
+            description: task.description,
+            output: result || "(no output)",
+          });
 
           // Write Task Completed
           await this.writeTaskProgress(
@@ -318,9 +438,8 @@ export class TeamOrchestrator {
             result,
           );
 
-          // Return full trace instead of just the final result
-          const fullTrace = agent.getExecutionTrace();
-          const detailedOutput = `### [Agent: ${task.assignedTo}]\n\n#### Task: ${task.description}\n\n${fullTrace}\n\n**Final Result**: ${result}`;
+          // Return concise output for final results
+          const detailedOutput = `### [Agent: ${task.assignedTo}]\n\n#### Task: ${task.description}\n\n**Result**: ${result}`;
           return detailedOutput;
         } catch (e: any) {
           const error = `[${task.assignedTo}] Failed: ${e.message}`;
@@ -350,8 +469,72 @@ export class TeamOrchestrator {
       // Wait for all tasks in this stage to complete (Parallel Execution)
       const stageResults = await Promise.all(stagePromises);
 
-      results.push(...stageResults);
-      executionLog.push(...stageResults);
+      // Stage Verification: check for failures and retry once
+      const failedTasks = stage.tasks.filter((t) => (t as any).status === "failed");
+      if (failedTasks.length > 0 && !signal?.aborted) {
+        if (onStatus) onStatus(`⚠️ Stage "${stage.name}": ${failedTasks.length} task(s) failed. Evaluating retry...`);
+
+        const verification = await this.verifyStageResults(stage, modelConfig, signal);
+
+        if (verification.retryTaskIds.length > 0) {
+          if (onStatus) onStatus(`🔄 Retrying ${verification.retryTaskIds.length} failed task(s) in "${stage.name}"...`);
+
+          const retryPromises = verification.retryTaskIds.map(async (taskId) => {
+            const task = stage.tasks.find((t) => t.id === taskId);
+            if (!task) return `[Retry] Task ${taskId} not found`;
+
+            const agent = this.teammates.get(task.assignedTo);
+            if (!agent) return `[Retry] Agent ${task.assignedTo} not found`;
+
+            // Reset status for retry
+            (task as any).status = "running";
+            (task as any).output = undefined;
+            broadcastState();
+
+            try {
+              const errorContext = `\n\n[RETRY] Previous attempt failed: ${(task as any).output || "unknown error"}. ${verification.suggestion || "Please try a different approach."}`;
+              let retryContext = "";
+              if (completedTaskOutputs.size > 0) {
+                const parts: string[] = [];
+                for (const [tid, info] of completedTaskOutputs) {
+                  parts.push(`=== ${tid} (${info.agent}) ===\n${info.output.substring(0, 500)}`);
+                }
+                retryContext = `\n\n[Previous Results]:\n${parts.join("\n\n")}`;
+              }
+              const retryInput = task.description + errorContext + retryContext;
+
+              const result = await agent.process(retryInput, undefined, undefined, signal);
+
+              (task as any).status = "completed";
+              (task as any).output = result;
+              broadcastState();
+
+              logger.info(`[TeamOrchestrator] Retry succeeded for task ${taskId}`);
+              const retryTrace = agent.getExecutionTrace();
+              return `### [Agent: ${task.assignedTo}] (Retry)\n\n#### Task: ${task.description}\n\n${retryTrace}\n\n**Final Result**: ${result}`;
+            } catch (e: any) {
+              (task as any).status = "failed";
+              (task as any).output = e.message;
+              broadcastState();
+              logger.error(`[TeamOrchestrator] Retry failed for task ${taskId}: ${e.message}`);
+              return `[${task.assignedTo}] Retry Failed: ${e.message}`;
+            }
+          });
+
+          const retryResults = await Promise.all(retryPromises);
+          results.push(...retryResults);
+        } else {
+          results.push(...stageResults);
+
+          if (verification.abort) {
+            if (onStatus) onStatus(`❌ Aborting: ${verification.suggestion}`);
+            logger.warn(`[TeamOrchestrator] Aborting after stage "${stage.name}": ${verification.suggestion}`);
+            break;
+          }
+        }
+      } else {
+        results.push(...stageResults);
+      }
     }
 
     return results.join("\n\n");
@@ -401,6 +584,111 @@ ${error ? `## Error\n${error}` : ""}
     } catch (e) {
       logger.error(`Failed to write task progress file ${fileName}`, e);
     }
+  }
+
+  /**
+   * Verify stage results using LLM to decide whether to retry failed tasks.
+   */
+  private async verifyStageResults(
+    stage: SwarmStage,
+    modelConfig: any,
+    signal?: AbortSignal,
+  ): Promise<{ retryTaskIds: string[]; abort: boolean; suggestion: string }> {
+    const taskSummaries = stage.tasks.map((t) => {
+      const status = (t as any).status || "unknown";
+      const output = (t as any).output || "";
+      return `- Task "${t.id}" (${t.assignedTo}): ${status}\n  Description: ${t.description}\n  Output: ${String(output).substring(0, 200)}`;
+    }).join("\n");
+
+    const verifyPrompt = `You are evaluating the results of a completed stage in a multi-agent task execution.
+
+Stage: "${stage.name}"
+
+Task Results:
+${taskSummaries}
+
+Decide:
+1. Which failed tasks should be retried (max 1 retry each)?
+2. Should we abort the entire mission?
+3. Any suggestions for the retry?`;
+
+    const verifySchema = {
+      name: "stage_verification",
+      schema: {
+        type: "object",
+        properties: {
+          retryTaskIds: { type: "array", items: { type: "string" }, description: "IDs of failed tasks to retry" },
+          abort: { type: "boolean", description: "True if mission should be aborted" },
+          suggestion: { type: "string", description: "Suggestion for retry approach or abort reason" },
+        },
+        required: ["retryTaskIds", "abort", "suggestion"],
+        additionalProperties: false,
+      },
+    };
+
+    try {
+      const response = await this.llmService.generateCompletion(
+        [
+          { role: "system", content: "You are a quality assurance agent. Evaluate task results and decide on retries. Only retry tasks that actually failed and have a reasonable chance of succeeding with a different approach. Do not retry tasks that failed due to fundamental impossibility." },
+          { role: "user", content: verifyPrompt },
+        ],
+        { ...modelConfig, stream: false },
+        true,
+        undefined,
+        undefined,
+        signal,
+        verifySchema,
+      );
+
+      if (!response) return { retryTaskIds: [], abort: false, suggestion: "Verification returned empty" };
+
+      const cleanJson = response.replace(/```json\n?|\n?```/g, "").trim();
+      const result = JSON.parse(cleanJson);
+      return {
+        retryTaskIds: Array.isArray(result.retryTaskIds) ? result.retryTaskIds : [],
+        abort: !!result.abort,
+        suggestion: result.suggestion || "",
+      };
+    } catch (e: any) {
+      logger.error(`[TeamOrchestrator] Stage verification failed: ${e.message}`);
+      return { retryTaskIds: [], abort: false, suggestion: "Verification error, continuing" };
+    }
+  }
+
+  /**
+   * Format a plan into a human-readable summary for approval Cards.
+   */
+  private formatPlanForApproval(plan: TeamPlan): string {
+    const lines: string[] = [
+      `## 📋 执行计划 — 等待确认\n`,
+      `> 💡 **策略分析**: ${plan.thoughts}\n`,
+      `---\n`,
+      `### 👥 团队配置\n`,
+      `| 角色 | 专长 | 工具 |`,
+      `|------|------|------|`,
+    ];
+
+    for (const member of plan.roster) {
+      const persona = member.persona.substring(0, 50).replace(/\|/g, "/");
+      const tools = member.tools.slice(0, 4).join(", ") + (member.tools.length > 4 ? " ..." : "");
+      lines.push(`| **${member.name}** | ${persona} | \`${tools}\` |`);
+    }
+
+    lines.push(`\n### 🚀 执行阶段\n`);
+
+    plan.mission.forEach((stage, i) => {
+      lines.push(`**阶段 ${i + 1}: ${stage.name}**\n`);
+      for (const task of stage.tasks) {
+        const desc = task.description.substring(0, 80);
+        lines.push(`- 📌 **${task.assignedTo}**: ${desc}`);
+      }
+      lines.push("");
+    });
+
+    lines.push(`---`);
+    lines.push(`\n> ⏳ 请回复 **"确认"** 开始执行，或 **"取消"** 放弃计划。`);
+
+    return lines.join("\n");
   }
 
   /**

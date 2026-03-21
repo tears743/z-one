@@ -17,19 +17,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onSave,
 }) => {
-  const [activeTab, setActiveTab] = useState<"general" | "agent" | "models" | "devices" | "scheduledTasks">(
+  const [activeTab, setActiveTab] = useState<"general" | "agent" | "models" | "devices" | "scheduledTasks" | "skills">(
     "general",
   );
   const [localSettings, setLocalSettings] = useState<AppSettings>(settings);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const trans = t(localSettings.general.language);
   const [scheduledTasks, setScheduledTasks] = useState<any[]>([]);
+  const [skillsList, setSkillsList] = useState<any[]>([]);
 
   // Load scheduled tasks when tab is active
   useEffect(() => {
     if (activeTab === "scheduledTasks" && isOpen) {
       window.electron?.ipcRenderer.invoke("cron:list").then((tasks: any[]) => {
         setScheduledTasks(tasks || []);
+      });
+    }
+    if (activeTab === "skills" && isOpen) {
+      window.electron?.ipcRenderer.invoke("skills:list").then((skills: any[]) => {
+        setSkillsList(skills || []);
       });
     }
   }, [activeTab, isOpen]);
@@ -189,6 +195,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               label={trans.scheduledTasks}
               active={activeTab === "scheduledTasks"}
               onClick={() => setActiveTab("scheduledTasks")}
+            />
+            <SidebarItem
+              label={(trans as any).skills || "Skills"}
+              active={activeTab === "skills"}
+              onClick={() => setActiveTab("skills")}
             />
           </div>
 
@@ -468,6 +479,83 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         ).name
                       }
                     </div>
+                  </div>
+                </Section>
+                <Section title={(trans as any).requirePlanApproval || "Plan Approval"}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        cursor: "pointer",
+                        color: "var(--text-secondary)",
+                        fontSize: "0.9rem",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!localSettings.general.requirePlanApproval}
+                        onChange={(e) =>
+                          updateGeneral("requirePlanApproval" as any, e.target.checked)
+                        }
+                      />
+                      {(trans as any).requirePlanApprovalDesc || "Require approval before executing team plans"}
+                    </label>
+                  </div>
+                </Section>
+                <Section title="Agent Iterations">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <label
+                      style={{
+                        color: "var(--text-secondary)",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      每个 Sub-Agent 最大迭代次数（值越大执行越深入，但消耗更多 Token）
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <input
+                        type="range"
+                        min={5}
+                        max={100}
+                        step={5}
+                        value={localSettings.general.maxAgentSteps || 15}
+                        disabled={localSettings.general.maxAgentSteps === 0}
+                        onChange={(e) =>
+                          updateGeneral("maxAgentSteps" as any, Number(e.target.value))
+                        }
+                        style={{ flex: 1, opacity: localSettings.general.maxAgentSteps === 0 ? 0.4 : 1 }}
+                      />
+                      <span style={{ 
+                        color: "var(--text-primary)", 
+                        fontWeight: 600,
+                        fontSize: "1rem",
+                        minWidth: "30px",
+                        textAlign: "center",
+                      }}>
+                        {localSettings.general.maxAgentSteps === 0 ? "∞" : (localSettings.general.maxAgentSteps ?? 15)}
+                      </span>
+                    </div>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        cursor: "pointer",
+                        color: "var(--text-secondary)",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={localSettings.general.maxAgentSteps === 0}
+                        onChange={(e) =>
+                          updateGeneral("maxAgentSteps" as any, e.target.checked ? 0 : 15)
+                        }
+                      />
+                      无限制（Agent 将持续迭代直到任务完成）
+                    </label>
                   </div>
                 </Section>
               </div>
@@ -1226,6 +1314,159 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                     </div>
                   ))}
+                </Section>
+              </div>
+            )}
+
+            {activeTab === "skills" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}
+              >
+                <Section title={(trans as any).skills || "Skills"}>
+                  {skillsList.length === 0 && (
+                    <p style={{ color: "var(--text-secondary)", fontStyle: "italic" }}>
+                      {(trans as any).noSkills || "No skills installed."}
+                    </p>
+                  )}
+
+                  {skillsList.map((skill: any) => {
+                    const statusColors: Record<string, string> = {
+                      active: "#4caf50",
+                      warned: "#ff9800",
+                      retired: "#f44336",
+                      disabled: "#666",
+                    };
+                    const statusLabels: Record<string, string> = {
+                      active: (trans as any).skillActive || "Active",
+                      warned: (trans as any).skillWarned || "Warned",
+                      retired: (trans as any).skillRetired || "Retired",
+                      disabled: (trans as any).skillDisabled || "Disabled",
+                    };
+
+                    return (
+                      <div
+                        key={skill.name}
+                        style={{
+                          border: "1px solid var(--border-color)",
+                          borderRadius: "8px",
+                          padding: "14px",
+                          marginBottom: "10px",
+                          backgroundColor: "var(--bg-primary)",
+                        }}
+                      >
+                        {/* Skill Header */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                            <span style={{ fontSize: "1.1em" }}>🧩</span>
+                            <span style={{ fontWeight: "bold", color: "var(--text-primary)" }}>
+                              {skill.name}
+                            </span>
+                            {skill.version && (
+                              <span style={{ fontSize: "0.8em", color: "var(--text-muted)" }}>
+                                v{skill.version}
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                fontSize: "0.75em",
+                                padding: "2px 8px",
+                                borderRadius: "12px",
+                                backgroundColor: statusColors[skill.status] || "#666",
+                                color: "#fff",
+                                fontWeight: "500",
+                              }}
+                            >
+                              {statusLabels[skill.status] || skill.status}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: "0.8em", padding: "4px 10px" }}
+                              onClick={async () => {
+                                const enabled = skill.status === "disabled" || skill.status === "retired";
+                                await window.electron?.ipcRenderer.invoke("skills:toggle", { name: skill.name, enabled });
+                                const updated = await window.electron?.ipcRenderer.invoke("skills:list");
+                                setSkillsList(updated || []);
+                              }}
+                            >
+                              {skill.status === "disabled" || skill.status === "retired"
+                                ? ((trans as any).skillEnable || "Enable")
+                                : ((trans as any).skillDisable || "Disable")}
+                            </button>
+                            <button
+                              className="icon-btn"
+                              style={{ color: "var(--error-color, #f44336)" }}
+                              onClick={async () => {
+                                if (!window.confirm((trans as any).skillDeleteConfirm || "Delete this skill?")) return;
+                                await window.electron?.ipcRenderer.invoke("skills:delete", { name: skill.name });
+                                const updated = await window.electron?.ipcRenderer.invoke("skills:list");
+                                setSkillsList(updated || []);
+                              }}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Description */}
+                        <div style={{ fontSize: "0.85em", color: "var(--text-secondary)", marginBottom: "8px" }}>
+                          {skill.description}
+                        </div>
+
+                        {/* Stats */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr 1fr",
+                            gap: "8px",
+                            fontSize: "0.8em",
+                            color: "var(--text-muted)",
+                          }}
+                        >
+                          <div>
+                            <strong>{(trans as any).skillCalls || "Calls"}:</strong> {skill.totalCalls}
+                          </div>
+                          <div>
+                            <strong>{(trans as any).skillFailureRate || "Failure Rate"}:</strong>{" "}
+                            <span style={{ color: skill.failureRate > 0.2 ? "#f44336" : skill.failureRate > 0.1 ? "#ff9800" : "inherit" }}>
+                              {(skill.failureRate * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                          <div>
+                            {skill.author && (<><strong>Author:</strong> {skill.author}</>)}
+                          </div>
+                        </div>
+
+                        {/* Failure rate bar */}
+                        {skill.totalCalls > 0 && (
+                          <div style={{ marginTop: "8px" }}>
+                            <div
+                              style={{
+                                height: "4px",
+                                borderRadius: "2px",
+                                backgroundColor: "var(--border-color)",
+                                overflow: "hidden",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(skill.failureRate * 100, 100)}%`,
+                                  height: "100%",
+                                  backgroundColor: skill.failureRate > 0.2 ? "#f44336" : skill.failureRate > 0.1 ? "#ff9800" : "#4caf50",
+                                  transition: "width 0.3s ease",
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </Section>
               </div>
             )}

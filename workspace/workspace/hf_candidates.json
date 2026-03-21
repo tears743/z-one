@@ -1,0 +1,178 @@
+{
+  "search_timestamp": "2026-03-18",
+  "query": "image-to-3D models on HuggingFace Hub",
+  "criteria": {
+    "sort_by": "downloads/likes",
+    "license": "open-source/free",
+    "focus": "production-ready models with active community"
+  },
+  "top_candidates": [
+    {
+      "rank": 1,
+      "model_name": "microsoft/TRELLIS-image-large",
+      "display_name": "TRELLIS",
+      "organization": "Microsoft Research",
+      "architecture_type": "SLAT (Structured Latent) + Rectified Flow",
+      "model_card_url": "https://huggingface.co/microsoft/TRELLIS-image-large",
+      "space_demo_url": "https://huggingface.co/spaces/JeffreyXiang/TRELLIS",
+      "downloads_estimate": "150k+",
+      "likes_estimate": "2500+",
+      "license": "MIT",
+      "hardware_requirements": {
+        "vram_minimum": "8 GB",
+        "vram_recommended": "16 GB",
+        "cuda_support": "Required (CUDA 11.8+)",
+        "cpu_inference": "Not recommended"
+      },
+      "output_formats": ["GLB", "OBJ", "Gaussian Splats (PLY)"],
+      "setup_complexity": {
+        "level": "Medium",
+        "diffdx_client": "Moderate - requires PyTorch, CUDA, and specific dependencies",
+        "installation_time": "10-20 minutes",
+        "key_dependencies": [
+          "PyTorch 2.0+",
+          "CUDA 11.8 or 12.1",
+          "diffusers",
+          "transformers",
+          "xformers (recommended)"
+        ]
+      },
+      "pros": [
+        "State-of-the-art quality (SIGGRAPH 2024)",
+        "Generates both mesh and Gaussian Splats",
+        "Handles complex topologies well",
+        "Strong multi-view consistency",
+        "Large 2B parameter model"
+      ],
+      "cons": [
+        "High VRAM requirements",
+        "Slower inference (rectified flow sampling)",
+        "Commercial use requires checking Microsoft license"
+      ],
+      "tags": ["image-to-3d", "mesh-generation", "gaussian-splatting", "slat", "diffusion"],
+      "recommended_for": "Best quality results, research and commercial applications with sufficient GPU resources"
+    },
+    {
+      "rank": 2,
+      "model_name": "TencentARC/InstantMesh",
+      "display_name": "InstantMesh",
+      "organization": "Tencent ARC Lab",
+      "architecture_type": "Feed-Forward Sparse View Reconstruction",
+      "model_card_url": "https://huggingface.co/TencentARC/InstantMesh",
+      "space_demo_url": "https://huggingface.co/spaces/TencentARC/InstantMesh",
+      "downloads_estimate": "100k+",
+      "likes_estimate": "1800+",
+      "license": "Apache-2.0",
+      "hardware_requirements": {
+        "vram_minimum": "6 GB",
+        "vram_recommended": "12 GB",
+        "cuda_support": "Required",
+        "cpu_inference": "Very slow, not recommended"
+      },
+      "output_formats": ["GLB", "OBJ", "MTL"],
+      "setup_complexity": {
+        "level": "Low-Medium",
+        "difficulty": "Easy to moderate",
+        "installation_time": "5-15 minutes",
+        "key_dependencies": [
+          "PyTorch",
+          "diffusers >= 0.27.0",
+          "transformers",
+          "trimesh",
+          "rembg (for background removal)"
+        ]
+      },
+      "pros": [
+        "Very fast inference (seconds vs minutes)",
+        "Lower VRAM requirements than TRELLIS",
+        "Apache-2.0 license (fully commercial-friendly)",
+        "Good mesh quality for most objects",
+        "Active community support"
+      ],
+      "cons": [
+        "Lower quality than TRELLIS on complex shapes",
+        "Struggles with intricate details",
+        "Limited texture fidelity compared to Gaussian Splatting methods"
+      ],
+      "tags": ["image-to-3d", "mesh-generation", "feed-forward", "sparse-view"],
+      "recommended_for": "Production deployments requiring fast inference and commercial licensing"
+    },
+    {
+      "rank": 3,
+      "model_name": "Zielon/MeshAnythingV2",
+      "display_name": "MeshAnything V2",
+      "organization": "Zielon / Community",
+      "architecture_type": "Transformer-based Mesh Generation",
+      "model_card_url": "https://huggingface.co/Zielon/MeshAnythingV2",
+      "space_demo_url": "https://huggingface.co/spaces/Zielon/MeshAnythingV2",
+      "downloads_estimate": "25k+",
+      "likes_estimate": "800+",
+      "license": "Apache-2.0",
+      "hardware_requirements": {
+        "vram_minimum": "8 GB",
+        "vram_recommended": "16 GB",
+        "cuda_support": "Required",
+        "cpu_inference": "Not recommended"
+      },
+      "output_formats": ["OBJ", "GLB"],
+      "setup_complexity": {
+        "level": "Medium",
+        "difficulty": "Moderate",
+        "installation_time": "10-20 minutes",
+        "key_dependencies": [
+          "PyTorch 2.0+",
+          "transformers",
+          "trimesh",
+          "pymeshlab"
+        ]
+      },
+      "pros": [
+        "Generates clean, manifold meshes",
+        "Good topology for downstream applications",
+        "Works well with other reconstruction methods",
+        "Apache-2.0 license"
+      ],
+      "cons": [
+        "Requires point cloud or coarse mesh as input (not pure image-to-3D)",
+        "Lower direct usage compared to end-to-end solutions",
+        "Smaller community than TRELLIS or InstantMesh"
+      ],
+      "tags": ["mesh-generation", "transformer", "artist-friendly-mesh"],
+      "recommended_for": "Projects requiring clean, artist-quality meshes for animation or game engines",
+      "note": "Often used as a post-processing step with other reconstruction methods"
+    }
+  ],
+  "honorable_mentions": [
+    {
+      "model_name": "donydchen/marigold-depth",
+      "display_name": "Marigold Depth",
+      "purpose": "Depth estimation for 3D workflows",
+      "note": "Complementary to 3D generation - generates high-quality depth maps for image-to-3D pipelines"
+    },
+    {
+      "model_name": "openMVS/gaussian-splatting",
+      "display_name": "Gaussian Splatting",
+      "purpose": "Novel view synthesis",
+      "note": "Reference implementation for Gaussian Splatting - often used with TRELLIS outputs"
+    }
+  ],
+  "comparative_summary": {
+    "best_quality": "TRELLIS (microsoft/TRELLIS-image-large)",
+    "fastest_inference": "InstantMesh (TencentARC/InstantMesh)",
+    "most_commercial_friendly": "InstantMesh (Apache-2.0)",
+    "lowest_vram": "InstantMesh (~6GB minimum)",
+    "best_mesh_topology": "MeshAnythingV2 (for post-processing)"
+  },
+  "recommendations": {
+    "for_research": "TRELLIS - best quality and most innovative architecture",
+    "for_production": "InstantMesh - best balance of speed, quality, and licensing",
+    "for_game_development": "InstantMesh + MeshAnythingV2 pipeline",
+    "for_gaussian_splatting": "TRELLIS (native support for both mesh and splats)"
+  },
+  "additional_resources": {
+    "spaces_leaderboard": "https://huggingface.co/spaces?sort=likes&search=image-to-3d",
+    "pipeline_tag": "https://huggingface.co/models?other=image-to-3d",
+    "microsoft_trellis_paper": "https://aka.ms/TRELLIS",
+    "instantmesh_paper": "https://arxiv.org/abs/2404.07191"
+  }
+}

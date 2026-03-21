@@ -8,6 +8,8 @@ import {
   X,
   Monitor,
   MonitorOff,
+  MessageSquare,
+  Workflow,
 } from "lucide-react";
 import { DeviceInfo } from "../services/interaction-client";
 
@@ -23,6 +25,8 @@ interface HeaderProps {
   ) => void;
   canControlWindow: boolean;
   onReconnect: () => void;
+  currentView: "chat" | "workflow";
+  onViewChange: (view: "chat" | "workflow") => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,6 +39,8 @@ export const Header: React.FC<HeaderProps> = ({
   onWindowCommand,
   canControlWindow,
   onReconnect,
+  currentView,
+  onViewChange,
 }) => {
   const [showDeviceList, setShowDeviceList] = useState(false);
 
@@ -48,6 +54,22 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Menu size={18} />
         </button>
+        <div className="header-view-tabs">
+          <button
+            className={`header-view-tab ${currentView === "chat" ? "active" : ""}`}
+            onClick={() => onViewChange("chat")}
+          >
+            <MessageSquare size={14} />
+            <span>对话</span>
+          </button>
+          <button
+            className={`header-view-tab ${currentView === "workflow" ? "active" : ""}`}
+            onClick={() => onViewChange("workflow")}
+          >
+            <Workflow size={14} />
+            <span>工作流</span>
+          </button>
+        </div>
         <h1 className="header-title">{trans.appTitle}</h1>
         <button
           onClick={() => setShowDeviceList(!showDeviceList)}
@@ -95,8 +117,8 @@ export const Header: React.FC<HeaderProps> = ({
           <div
             style={{
               position: "absolute",
-              top: "40px",
-              left: "260px",
+              top: "36px",
+              left: "0",
               width: "250px",
               backgroundColor: "var(--bg-secondary)",
               border: "1px solid var(--border-color)",

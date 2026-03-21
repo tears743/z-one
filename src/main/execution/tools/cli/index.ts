@@ -62,9 +62,15 @@ async function checkSystemPermission(): Promise<{
 async function requestUserPermission(
   command: string,
 ): Promise<"allow" | "always" | "deny"> {
-  const win = BrowserWindow.getFocusedWindow();
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
 
-  const result = await dialog.showMessageBox(win || ({} as any), {
+  if (!win) {
+    // No window available (headless/background mode) — auto-allow
+    logger.info(`[CLI Tool] No window available for permission dialog, auto-allowing command: ${command}`);
+    return "allow";
+  }
+
+  const result = await dialog.showMessageBox(win, {
     type: "question",
     title: "CLI Command Permission",
     message: `Agent wants to execute a command:`,

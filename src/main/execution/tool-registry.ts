@@ -6,6 +6,7 @@ import { logger } from "../logger";
 export interface ToolContext {
     deviceId?: string;
     sessionId?: string;
+    agentId?: string;
 }
 
 export interface NativeTool {

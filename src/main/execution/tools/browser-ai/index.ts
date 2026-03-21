@@ -1,50 +1,48 @@
 import { Stagehand, CustomOpenAIClient } from "@browserbasehq/stagehand";
 import OpenAI from "openai";
-import { NativeTool } from "../../tool-registry";
+import { NativeTool, ToolContext } from "../../tool-registry";
 import { logger } from "../../../logger";
 import { getAppSettings } from "../../../db";
 
 const INIT_TIMEOUT_MS = 30_000; // 30s timeout for browser launch
 
 /**
- * StagehandManager — singleton that manages a Stagehand instance.
- * Uses local Chromium (headless:false) and the user's configured LLM.
+ * StagehandManager — manages per-agent Stagehand instances.
+ * Each agent gets its own browser process, providing full isolation.
+ * Stagehand's act/extract/observe always operate on its internal page,
+ * so sharing a single instance across agents doesn't work.
  */
 class StagehandManager {
-  private stagehand: Stagehand | null = null;
-  private initPromise: Promise<Stagehand> | null = null;
+  /** agentId -> Stagehand instance */
+  private instances: Map<string, Stagehand> = new Map();
+  /** agentId -> init Promise (prevents concurrent init for same agent) */
+  private initPromises: Map<string, Promise<Stagehand>> = new Map();
+  /** Fallback instance for calls without agentId */
+  private defaultInstance: Stagehand | null = null;
+  private defaultInitPromise: Promise<Stagehand> | null = null;
   private lastError: string | null = null;
 
   /**
    * Stagehand-supported providers in priority order.
-   * These are the providers officially supported by Stagehand's Agent mode.
    */
   private static PREFERRED_PROVIDERS = ["google", "gemini", "openai", "anthropic"];
 
-  /**
-   * Stagehand-preferred model IDs — if a user has any of these configured,
-   * use them instead of the active model.
-   */
   private static PREFERRED_MODEL_PATTERNS = [
-    "gemini",     // Google Gemini
-    "gpt-4o",     // OpenAI GPT-4o
-    "computer-use", // OpenAI Computer Use Preview
-    "claude",     // Anthropic Claude
+    "gemini",
+    "gpt-4o",
+    "computer-use",
+    "claude",
   ];
 
   /**
    * Build an LLM client from the user's model settings.
-   * Prioritizes Stagehand-compatible models (Gemini, GPT-4o, Claude),
-   * falls back to the currently active model if none are found.
    */
   private buildLLMClient() {
     const settings = getAppSettings();
     const allModels = settings.models || [];
 
-    // 1. Try to find a preferred Stagehand-compatible model
     let model = this.findPreferredModel(allModels);
 
-    // 2. Fallback to active model
     if (!model) {
       const targetModelId = settings.activeModelId;
       model = allModels.find((m: any) => m.id === targetModelId);
@@ -56,7 +54,6 @@ class StagehandManager {
       );
     }
 
-    // Normalize baseUrl: built-in models may have undefined baseUrl
     const baseUrl = (model.baseUrl || "https://api.openai.com/v1").replace(
       /\/+$/,
       "",
@@ -66,15 +63,12 @@ class StagehandManager {
       `[StagehandManager] Using model: ${model.modelId} (provider: ${model.provider}) at ${baseUrl}`,
     );
 
-    // Create an OpenAI-compatible client — works with any provider
-    // that exposes the /chat/completions endpoint (OpenAI, Deepseek, Ollama, etc.)
     const openaiClient = new OpenAI({
       baseURL: baseUrl,
       apiKey: model.apiKey || "dummy",
     });
 
-    // Proxy: override sampling parameters for providers that reject non-default values.
-    // e.g. kimi-k2.5 rejects non-default temperature/top_p with 400 errors.
+    // Proxy: override sampling parameters for providers that reject non-default values
     const needsParamOverride = !StagehandManager.PREFERRED_PROVIDERS.includes(model.provider);
     if (needsParamOverride) {
       const originalCreate = openaiClient.chat.completions.create.bind(
@@ -109,135 +103,171 @@ class StagehandManager {
     });
   }
 
-  /**
-   * Search configured models for a Stagehand-preferred model.
-   * Returns the first enabled model that matches a preferred provider/pattern.
-   */
   private findPreferredModel(models: any[]): any | null {
-    // Only consider enabled models with an API key
     const enabledModels = models.filter(
       (m: any) => m.enabled && m.apiKey && m.modelType !== "embedding",
     );
 
-    // Try matching by provider first
     for (const provider of StagehandManager.PREFERRED_PROVIDERS) {
       const match = enabledModels.find((m: any) => m.provider === provider);
       if (match) {
-        logger.info(
-          `[StagehandManager] Found preferred Stagehand model: ${match.modelId} (${match.provider})`,
-        );
+        logger.info(`[StagehandManager] Found preferred model by provider: ${match.modelId}`);
         return match;
       }
     }
 
-    // Try matching by modelId pattern
     for (const pattern of StagehandManager.PREFERRED_MODEL_PATTERNS) {
       const match = enabledModels.find((m: any) =>
         m.modelId?.toLowerCase().includes(pattern),
       );
       if (match) {
-        logger.info(
-          `[StagehandManager] Found preferred Stagehand model by pattern: ${match.modelId}`,
-        );
+        logger.info(`[StagehandManager] Found preferred model by pattern: ${match.modelId}`);
         return match;
       }
     }
 
-    logger.info(
-      "[StagehandManager] No Stagehand-preferred model found, will fallback to active model.",
-    );
+    logger.info("[StagehandManager] No preferred model found, will use active model.");
     return null;
   }
 
-  async getInstance(): Promise<Stagehand> {
-    if (this.stagehand) return this.stagehand;
+  /**
+   * Create a new Stagehand instance (launches a separate browser process).
+   */
+  private async createInstance(label: string): Promise<Stagehand> {
+    logger.info(`[StagehandManager] Creating Stagehand instance for: ${label}`);
 
-    // Prevent concurrent init attempts
-    if (this.initPromise) return this.initPromise;
+    const stagehand = new Stagehand({
+      env: "LOCAL",
+      localBrowserLaunchOptions: {
+        headless: false,
+      },
+      llmClient: this.buildLLMClient(),
+      verbose: 1,
+    });
 
-    this.initPromise = this.doInit();
-    try {
-      const result = await this.initPromise;
-      return result;
-    } finally {
-      this.initPromise = null;
-    }
+    await Promise.race([
+      stagehand.init(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(
+            `Browser init timed out after ${INIT_TIMEOUT_MS / 1000}s. ` +
+            `Ensure Chromium is installed: npx playwright install chromium`,
+          )),
+          INIT_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+
+    logger.info(`[StagehandManager] Instance ready for: ${label}`);
+    return stagehand;
   }
 
-  private async doInit(): Promise<Stagehand> {
-    logger.info("[StagehandManager] Initializing Stagehand (local browser)...");
+  /**
+   * Get or create a Stagehand instance for a specific agent.
+   * Each agent gets its own isolated browser.
+   */
+  async getInstanceForAgent(agentId: string): Promise<Stagehand> {
+    // Return existing if alive
+    const existing = this.instances.get(agentId);
+    if (existing) return existing;
 
-    try {
-      const stagehand = new Stagehand({
-        env: "LOCAL",
-        localBrowserLaunchOptions: {
-          headless: false,
-        },
-        llmClient: this.buildLLMClient(),
-        verbose: 1,
+    // Prevent concurrent init for the same agent
+    const pending = this.initPromises.get(agentId);
+    if (pending) return pending;
+
+    const promise = this.createInstance(`agent:${agentId}`)
+      .then((stagehand) => {
+        this.instances.set(agentId, stagehand);
+        this.initPromises.delete(agentId);
+        this.lastError = null;
+        return stagehand;
+      })
+      .catch((err) => {
+        this.initPromises.delete(agentId);
+        this.lastError = err.message || String(err);
+        logger.error(`[StagehandManager] Init failed for agent ${agentId}: ${this.lastError}`);
+        throw err;
       });
 
-      // Add timeout to prevent hanging forever
-      await Promise.race([
-        stagehand.init(),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Browser init timed out after ${INIT_TIMEOUT_MS / 1000}s. ` +
-                  `Ensure Chromium is installed: npx playwright install chromium`,
-                ),
-              ),
-            INIT_TIMEOUT_MS,
-          ),
-        ),
-      ]);
+    this.initPromises.set(agentId, promise);
+    return promise;
+  }
 
-      this.stagehand = stagehand;
-      this.lastError = null;
-      logger.info("[StagehandManager] Stagehand initialized successfully.");
-      return stagehand;
-    } catch (err: any) {
-      this.lastError = err.message || String(err);
-      logger.error(`[StagehandManager] Init failed: ${this.lastError}`);
-      // Clean up any partial browser process
-      await this.forceCleanup();
-      throw err;
+  /**
+   * Get or create the default instance (for calls without agentId).
+   */
+  async getDefaultInstance(): Promise<Stagehand> {
+    if (this.defaultInstance) return this.defaultInstance;
+    if (this.defaultInitPromise) return this.defaultInitPromise;
+
+    this.defaultInitPromise = this.createInstance("default")
+      .then((stagehand) => {
+        this.defaultInstance = stagehand;
+        this.defaultInitPromise = null;
+        this.lastError = null;
+        return stagehand;
+      })
+      .catch((err) => {
+        this.defaultInitPromise = null;
+        this.lastError = err.message || String(err);
+        throw err;
+      });
+
+    return this.defaultInitPromise;
+  }
+
+  /**
+   * Close a specific agent's browser instance.
+   */
+  async closeAgent(agentId: string) {
+    const instance = this.instances.get(agentId);
+    if (instance) {
+      try {
+        await instance.close();
+        logger.info(`[StagehandManager] Closed browser for agent: ${agentId}`);
+      } catch (e) {
+        logger.warn(`[StagehandManager] Error closing browser for agent ${agentId}`, e);
+      }
+      this.instances.delete(agentId);
     }
   }
 
+  /**
+   * Close all browser instances.
+   */
   async close() {
-    if (this.stagehand) {
+    for (const [agentId, instance] of this.instances) {
       try {
-        await this.stagehand.close();
-      } catch (e) {
-        logger.warn("[StagehandManager] Error closing stagehand", e);
-      }
-      this.stagehand = null;
-      this.lastError = null;
-      logger.info("[StagehandManager] Stagehand closed.");
+        await instance.close();
+        logger.info(`[StagehandManager] Closed browser for agent: ${agentId}`);
+      } catch { /* best-effort */ }
     }
-    // Kill orphan Chromium processes launched by Playwright
+    this.instances.clear();
+
+    if (this.defaultInstance) {
+      try {
+        await this.defaultInstance.close();
+      } catch (e) {
+        logger.warn("[StagehandManager] Error closing default stagehand", e);
+      }
+      this.defaultInstance = null;
+      logger.info("[StagehandManager] Default Stagehand closed.");
+    }
+
+    this.lastError = null;
     await this.forceCleanup();
   }
 
   /**
    * Force-kill any orphan Chromium processes spawned by Playwright.
-   * This prevents ghost browser windows from lingering in the dock.
    */
   private async forceCleanup() {
     try {
       const { exec } = await import("child_process");
       const { promisify } = await import("util");
       const execAsync = promisify(exec);
-      // Kill Chromium processes that were launched by Playwright (not the user's own Chrome)
-      await execAsync(
-        'pkill -f "chromium.*--remote-debugging" 2>/dev/null || true',
-      );
-    } catch {
-      // Best-effort cleanup, ignore errors
-    }
+      await execAsync('pkill -f "chromium.*--remote-debugging" 2>/dev/null || true');
+    } catch { /* best-effort */ }
   }
 
   getLastError(): string | null {
@@ -247,32 +277,36 @@ class StagehandManager {
 
 export const stagehandManager = new StagehandManager();
 
-// Guard: Stagehand's internal pino logger can crash when the worker exits
-// (e.g. when Chromium closes during app shutdown). Catch it gracefully.
+// Guard: Stagehand's internal pino logger can crash when worker exits
 process.on("uncaughtException", (err) => {
   if (
     err.message?.includes("the worker has exited") ||
     err.message?.includes("write after end")
   ) {
-    // Stagehand/pino teardown race condition — safe to ignore
-    return;
+    return; // Stagehand/pino teardown race — safe to ignore
   }
-  // Re-throw non-Stagehand errors
   throw err;
 });
 
 /**
- * Helper: get Stagehand and its active page (Playwright Page).
- * Stagehand v3 uses context.awaitActivePage() to resolve the page.
+ * Helper: get a Stagehand instance and its page for a specific agent.
+ * Each agent gets its own fully isolated browser instance.
  */
-async function getStagehandAndPage() {
-  const stagehand = await stagehandManager.getInstance();
+async function getStagehandAndPage(agentId?: string) {
+  let stagehand: Stagehand;
+
+  if (agentId) {
+    stagehand = await stagehandManager.getInstanceForAgent(agentId);
+  } else {
+    stagehand = await stagehandManager.getDefaultInstance();
+  }
+
+  // Get the page from this agent's own stagehand instance
   let page: any = null;
   try {
     const ctx = (stagehand as any).context || (stagehand as any).ctx;
     if (ctx?.awaitActivePage) {
       const v3page = await ctx.awaitActivePage();
-      // v3page may wrap a Playwright page — extract the raw page if needed
       page = v3page?.page || v3page;
     }
   } catch (e) {
@@ -295,9 +329,9 @@ Returns the page title and URL.`,
     },
     required: ["url"],
   },
-  execute: async (args: { url: string }) => {
+  execute: async (args: { url: string }, context?: ToolContext) => {
     try {
-      const { stagehand, page } = await getStagehandAndPage();
+      const { stagehand, page } = await getStagehandAndPage(context?.agentId);
       if (!page) {
         await stagehand.act(`navigate to ${args.url}`);
         return { title: "Navigated", url: args.url };
@@ -331,9 +365,9 @@ The AI will identify the correct element and perform the action.`,
     },
     required: ["action"],
   },
-  execute: async (args: { action: string }) => {
+  execute: async (args: { action: string }, context?: ToolContext) => {
     try {
-      const { stagehand } = await getStagehandAndPage();
+      const { stagehand } = await getStagehandAndPage(context?.agentId);
       const result = await stagehand.act(args.action);
       return { success: true, action: args.action, result };
     } catch (err: any) {
@@ -360,10 +394,9 @@ Examples: "extract all product names and prices", "get the main article text", "
     },
     required: ["instruction"],
   },
-  execute: async (args: { instruction: string }) => {
+  execute: async (args: { instruction: string }, context?: ToolContext) => {
     try {
-      const { stagehand } = await getStagehandAndPage();
-      // V3: extract(instruction) returns the extracted data
+      const { stagehand } = await getStagehandAndPage(context?.agentId);
       const result = await stagehand.extract(args.instruction);
       return result;
     } catch (err: any) {
@@ -389,9 +422,9 @@ Examples: "find all buttons", "what forms are on this page", "what can I click"`
       },
     },
   },
-  execute: async (args: { instruction?: string }) => {
+  execute: async (args: { instruction?: string }, context?: ToolContext) => {
     try {
-      const { stagehand } = await getStagehandAndPage();
+      const { stagehand } = await getStagehandAndPage(context?.agentId);
       const observations = await stagehand.observe(
         args.instruction || "What actions can I take on this page?",
       );
@@ -416,9 +449,9 @@ export const BrowserAIScreenshotTool: NativeTool = {
       },
     },
   },
-  execute: async (args: { fullPage?: boolean }) => {
+  execute: async (args: { fullPage?: boolean }, context?: ToolContext) => {
     try {
-      const { page } = await getStagehandAndPage();
+      const { page } = await getStagehandAndPage(context?.agentId);
       if (!page) {
         return { error: true, message: "No page available for screenshot" };
       }
@@ -449,9 +482,9 @@ Automatically cleans markup, removes scripts/styles, and truncates to avoid toke
       },
     },
   },
-  execute: async (args: { maxLength?: number }) => {
+  execute: async (args: { maxLength?: number }, context?: ToolContext) => {
     try {
-      const { stagehand, page } = await getStagehandAndPage();
+      const { stagehand, page } = await getStagehandAndPage(context?.agentId);
       if (!page) {
         const result = await stagehand.extract(
           "Get the full text content of the page",
@@ -499,9 +532,13 @@ export const BrowserAICloseTool: NativeTool = {
     type: "object",
     properties: {},
   },
-  execute: async () => {
+  execute: async (_args: any, context?: ToolContext) => {
     try {
-      await stagehandManager.close();
+      if (context?.agentId) {
+        await stagehandManager.closeAgent(context.agentId);
+      } else {
+        await stagehandManager.close();
+      }
       return { status: "Browser closed" };
     } catch (err: any) {
       return { error: true, message: err.message || String(err) };

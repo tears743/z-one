@@ -49,6 +49,8 @@ export interface AppSettings {
     primaryColor: string; // For skin/theme color
     language: "en" | "zh";
     agentWorkspace?: string;
+    requirePlanApproval?: boolean; // If true, wait for user approval before executing team plans
+    maxAgentSteps?: number; // Max iteration steps per sub-agent (default: 15)
   };
   models: ModelConfig[];
   devices: DeviceConfig[];
@@ -114,6 +116,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     theme: "dark",
     primaryColor: "#0e639c",
     language: "zh",
+    requirePlanApproval: false,
+    maxAgentSteps: 15,
   },
   models: DEFAULT_MODELS,
   devices: [],

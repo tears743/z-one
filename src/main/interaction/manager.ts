@@ -8,11 +8,23 @@ import {
   AuthRequestPayload,
   AuthResponsePayload,
 } from "./types";
+import { userInteractionBridge } from "../execution/tools/native/user-interaction";
 import { getDevice, saveDevice, getModels, getAppSettings } from "../db";
+import * as workflowStore from "../workflow/store";
 import { logger } from "../logger";
+import {
+  generateDomQueryScript,
+  generateElementQueryScript,
+  generateClickScript,
+  generateTypeScript,
+  generateSelectScript,
+  generateScrollScript,
+  generateFocusScript,
+} from "./dom-query";
 
 import { Planner } from "../intelligence/planner";
 import { MessageQueue } from "./message-queue";
+
 
 export class InteractionManager {
   private wss: WebSocketServer | null = null;
@@ -31,6 +43,54 @@ export class InteractionManager {
   public setPlanner(planner: Planner) {
     this.planner = planner;
     this.messageQueue = new MessageQueue(planner);
+
+    // Wire up the ask_user event bridge:
+    // When a SubAgent's ask_user tool emits, forward to the target device
+    userInteractionBridge.on("ask_user", (payload) => {
+      const { deviceId, requestId, message, imageBase64, waitForReply } = payload;
+
+      // Send to the target device via WebSocket
+      const sent = this.sendToDevice(deviceId, {
+        type: "message",
+        payload: {
+          content: message,
+          from: "agent",
+          isChunk: true,
+          details: {
+            askUser: {
+              requestId,
+              message,
+              imageBase64,
+              waitForReply,
+            },
+          },
+        },
+        timestamp: Date.now(),
+      });
+
+      if (!sent) {
+        // If device not found, broadcast to all active connections
+        this.broadcast({
+          type: "message",
+          payload: {
+            content: message,
+            from: "agent",
+            isChunk: true,
+            details: {
+              askUser: {
+                requestId,
+                message,
+                imageBase64,
+                waitForReply,
+              },
+            },
+          },
+          timestamp: Date.now(),
+        });
+      }
+
+      logger.info(`[InteractionManager] Forwarded ask_user to device ${deviceId}: requestId=${requestId}`);
+    });
   }
 
   // Lifecycle Hooks
@@ -162,7 +222,7 @@ export class InteractionManager {
   }
   */
 
-  private handleMessage(ws: WebSocket, message: InteractionMessage) {
+  private async handleMessage(ws: WebSocket, message: InteractionMessage) {
     logger.info("Received message:", message);
     switch (message.type) {
       case "register":
@@ -172,7 +232,7 @@ export class InteractionManager {
         this.handleAuthResponse(ws, message.payload as AuthResponsePayload);
         break;
       case "message":
-        this.handleTextMessage(ws, message);
+        await this.handleTextMessage(ws, message);
         break;
       case "session_request":
         this.handleSessionRequest(ws, message.payload);
@@ -186,7 +246,32 @@ export class InteractionManager {
       case "cancel_request":
         this.handleCancelRequest(ws);
         break;
+      case "user_reply":
+        this.handleUserReply(ws, message.payload);
+        break;
+      case "remote_control":
+        await this.handleRemoteControl(ws, message.payload);
+        break;
     }
+  }
+
+  /**
+   * Handle user_reply messages from devices — route to the ask_user tool's
+   * pending Promise via the event bridge.
+   */
+  private handleUserReply(ws: WebSocket, payload: any) {
+    const info = this.connections.get(ws);
+    const deviceId = info?.deviceId || "unknown";
+    const { requestId, reply } = payload || {};
+
+    if (!requestId || !reply) {
+      logger.warn(`[InteractionManager] Invalid user_reply: missing requestId or reply`);
+      return;
+    }
+
+    logger.info(`[InteractionManager] Received user_reply from ${deviceId}: requestId=${requestId}`);
+    // Emit to the bridge — the ask_user tool is listening for this event
+    userInteractionBridge.emit(`user_reply:${deviceId}:${requestId}`, reply);
   }
 
   private handleRegister(ws: WebSocket, payload: RegisterPayload) {
@@ -218,8 +303,9 @@ export class InteractionManager {
       info.name = payload.name;
     }
 
-    // Check internal token
-    if (payload.type === "internal" && payload.token === this.internalToken) {
+    // Check internal token or trusted CLI deviceId
+    const isTrustedCli = payload.deviceId === "_zone_cli" && payload.type === "internal";
+    if ((payload.type === "internal" && payload.token === this.internalToken) || isTrustedCli) {
       info.type = "internal";
       info.status = "active";
 
@@ -497,9 +583,28 @@ export class InteractionManager {
       { timestamp: message.timestamp },
     );
 
+    logger.info(
+      `[InteractionManager] Planner state check: planner=${!!this.planner}, messageQueue=${!!this.messageQueue}`,
+    );
+
     if (this.planner && this.messageQueue) {
       const payload = message.payload as any;
       const sessionId = payload.sessionId;
+
+      // --- Plan Approval Interception ---
+      // If there's a pending plan approval, route the user's message to the
+      // approval handler instead of processing it as a new task.
+      const pendingId = (userInteractionBridge as any).pendingApprovalId;
+      if (pendingId) {
+        // payload.content may be a string or {content: string, images: []}
+        const rawContent = payload.content;
+        const userReply = typeof rawContent === "string" ? rawContent : (rawContent?.content || String(rawContent));
+        logger.info(`[InteractionManager] Intercepting message as plan approval reply: "${userReply}"`);
+        // Emit on both event patterns the orchestrator listens to
+        userInteractionBridge.emit(`user_reply:unknown:${pendingId}`, userReply);
+        userInteractionBridge.emit(`plan_approval:${pendingId}`, userReply);
+        return; // Don't process as a new task
+      }
 
       // Hydrate model config from DB
       let modelConfig: any = {};
@@ -524,6 +629,17 @@ export class InteractionManager {
           }
         } else {
           logger.warn("No valid model configuration found for request");
+          // Send an error back to the user immediately — don't let empty config fail silently
+          this.sendTo(ws, {
+            type: "message",
+            payload: {
+              content: "❌ 未找到有效的模型配置。请在设置中添加并激活一个模型后重试。\n(No valid model configuration found. Please add and activate a model in Settings.)",
+              from: "system",
+              to: info.deviceId,
+            },
+            timestamp: Date.now(),
+          });
+          return;
         }
       } catch (err) {
         logger.error("Failed to hydrate model config from DB", err);
@@ -580,16 +696,28 @@ export class InteractionManager {
           });
         },
         onError: (error: Error) => {
-          logger.error(`Error processing message from ${info.deviceId}`, error);
+          logger.error(`[MessageQueue] Error processing message from ${info.deviceId}: ${error.message}`, error);
           this.sendTo(ws, {
             type: "message",
             payload: {
-              content: `Error: ${error.message}`,
+              content: `❌ Error: ${error.message}`,
               from: "system",
+              to: info.deviceId,
             },
             timestamp: Date.now(),
           });
         },
+      }).catch((err: any) => {
+        logger.error(`[MessageQueue] Unhandled error during enqueue for ${info.deviceId}: ${err.message}`, err);
+        this.sendTo(ws, {
+          type: "message",
+          payload: {
+            content: `❌ Error: ${err.message}`,
+            from: "system",
+            to: info.deviceId,
+          },
+          timestamp: Date.now(),
+        });
       });
     } else {
       // Fallback: Broadcast if no planner attached (Legacy mode)
@@ -698,6 +826,355 @@ export class InteractionManager {
           timestamp: Date.now(),
         });
       }
+    });
+  }
+
+  // ─── Remote Control Handler ─────────────────────────────────────────
+
+  private async handleRemoteControl(ws: WebSocket, payload: any) {
+    const info = this.connections.get(ws);
+    // Only allow internal (trusted) connections to use remote control
+    if (!info || info.type !== "internal" || info.status !== "active") {
+      this.sendTo(ws, {
+        type: "remote_control_response",
+        payload: { requestId: payload?.requestId, error: "Unauthorized: only internal devices can use remote control" },
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    const { requestId, action, params } = payload || {};
+    if (!action) {
+      this.sendTo(ws, {
+        type: "remote_control_response",
+        payload: { requestId, error: "Missing action" },
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    let result: any;
+
+    try {
+      const { BrowserWindow } = require("electron");
+      const win = BrowserWindow.getAllWindows()[0];
+
+      switch (action) {
+        case "screenshot": {
+          if (!win) { result = { error: "No window available" }; break; }
+          const image = await win.capturePage();
+          const png = image.toPNG();
+          const base64 = png.toString("base64");
+          if (params?.save) {
+            const fs = require("fs");
+            fs.writeFileSync(params.save, png);
+            result = { success: true, savedTo: params.save, size: png.length };
+          } else {
+            result = { success: true, image: `data:image/png;base64,${base64}`, size: png.length };
+          }
+          break;
+        }
+
+        case "dom": {
+          if (!win) { result = { error: "No window available" }; break; }
+          const script = generateDomQueryScript(params || {});
+          const raw = await win.webContents.executeJavaScript(script);
+          result = JSON.parse(raw);
+          break;
+        }
+
+        case "dom_element": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.selector) { result = { error: "Missing selector" }; break; }
+          const elScript = generateElementQueryScript(params.selector);
+          const elRaw = await win.webContents.executeJavaScript(elScript);
+          result = JSON.parse(elRaw);
+          break;
+        }
+
+        case "click": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.selector) { result = { error: "Missing selector" }; break; }
+          const clickScript = generateClickScript(params.selector);
+          const clickRaw = await win.webContents.executeJavaScript(clickScript);
+          result = JSON.parse(clickRaw);
+          break;
+        }
+
+        case "dblclick": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.selector) { result = { error: "Missing selector" }; break; }
+          // Double-click: get element rect, then send two mouse events
+          const dblScript = `(function() {
+            try {
+              const el = document.querySelector("${params.selector.replace(/"/g, '\\"')}");
+              if (!el) return JSON.stringify({ error: "Element not found" });
+              el.scrollIntoView({ block: "center" });
+              const rect = el.getBoundingClientRect();
+              el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: rect.x + rect.width/2, clientY: rect.y + rect.height/2 }));
+              return JSON.stringify({ success: true });
+            } catch(e) { return JSON.stringify({ error: e.message }); }
+          })()`;
+          const dblRaw = await win.webContents.executeJavaScript(dblScript);
+          result = JSON.parse(dblRaw);
+          break;
+        }
+
+        case "type": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.selector || params.text === undefined) {
+            result = { error: "Missing selector or text" }; break;
+          }
+          const typeScript = generateTypeScript(params.selector, params.text);
+          const typeRaw = await win.webContents.executeJavaScript(typeScript);
+          result = JSON.parse(typeRaw);
+          break;
+        }
+
+        case "scroll": {
+          if (!win) { result = { error: "No window available" }; break; }
+          const scrollScript = generateScrollScript(
+            params?.selector || null,
+            params?.deltaX || 0,
+            params?.deltaY || 0
+          );
+          const scrollRaw = await win.webContents.executeJavaScript(scrollScript);
+          result = JSON.parse(scrollRaw);
+          break;
+        }
+
+        case "select": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.selector || params.value === undefined) {
+            result = { error: "Missing selector or value" }; break;
+          }
+          const selScript = generateSelectScript(params.selector, params.value);
+          const selRaw = await win.webContents.executeJavaScript(selScript);
+          result = JSON.parse(selRaw);
+          break;
+        }
+
+        case "focus": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.selector) { result = { error: "Missing selector" }; break; }
+          const focScript = generateFocusScript(params.selector);
+          const focRaw = await win.webContents.executeJavaScript(focScript);
+          result = JSON.parse(focRaw);
+          break;
+        }
+
+        case "eval": {
+          if (!win) { result = { error: "No window available" }; break; }
+          if (!params?.code) { result = { error: "Missing code" }; break; }
+          const evalResult = await win.webContents.executeJavaScript(params.code);
+          result = { success: true, result: evalResult };
+          break;
+        }
+
+        case "get_app_state": {
+          try {
+            const settings = getAppSettings();
+            const models = getModels();
+            const devices = Array.from(this.connections.values()).map(c => ({
+              deviceId: c.deviceId, name: c.name, status: c.status, type: c.type,
+            }));
+            result = { settings, models, devices };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "get_window_info": {
+          if (!win) { result = { error: "No window available" }; break; }
+          const bounds = win.getBounds();
+          result = {
+            bounds,
+            title: win.getTitle(),
+            focused: win.isFocused(),
+            visible: win.isVisible(),
+            minimized: win.isMinimized(),
+            maximized: win.isMaximized(),
+            fullScreen: win.isFullScreen(),
+          };
+          break;
+        }
+
+
+        // ─── Workflow Actions (via WS remote_control) ──────────────────────
+
+        case "workflow_list": {
+          try {
+            const workflows = workflowStore.listWorkflows();
+            result = {
+              workflows: workflows.map((w) => ({
+                id: w.id,
+                name: w.name,
+                description: w.description,
+                version: w.version,
+                nodeCount: w.nodes.length,
+                updatedAt: w.updatedAt,
+              })),
+            };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_status": {
+          const wfId = params?.id;
+          if (!wfId) { result = { error: "Missing workflow id" }; break; }
+          try {
+            const workflow = workflowStore.getWorkflow(wfId);
+            if (!workflow) { result = { error: `Workflow ${wfId} not found` }; break; }
+            const runs = workflowStore.getRunsByWorkflow(wfId);
+            result = {
+              workflow: {
+                id: workflow.id,
+                name: workflow.name,
+                description: workflow.description,
+                version: workflow.version,
+                nodeCount: workflow.nodes.length,
+                nodes: workflow.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
+              },
+              runs: runs.map((r) => ({
+                id: r.id,
+                status: r.status,
+                startedAt: r.startedAt,
+                completedAt: r.completedAt,
+                nodeStates: Object.fromEntries(
+                  Object.entries(r.nodeStates).map(([nid, ns]) => [
+                    nid,
+                    { status: ns.status, iterations: ns.iterations },
+                  ]),
+                ),
+              })),
+            };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_start": {
+          const startId = params?.id;
+          if (!startId) { result = { error: "Missing workflow id" }; break; }
+          try {
+            const engine = this.planner?.getWorkflowEngine();
+            if (!engine) { result = { error: "Workflow engine not initialized" }; break; }
+            const settings = getAppSettings();
+            const models = getModels();
+            const modelCfg = models.find((m: any) => m.id === settings?.activeModelId) || {};
+            const run = await engine.startWorkflow(startId, modelCfg);
+            result = { success: true, runId: run.id, status: run.status };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_pause": {
+          const pauseRunId = params?.runId;
+          if (!pauseRunId) { result = { error: "Missing runId" }; break; }
+          try {
+            const engine = this.planner?.getWorkflowEngine();
+            if (!engine) { result = { error: "Workflow engine not initialized" }; break; }
+            engine.pauseWorkflow(pauseRunId);
+            result = { success: true };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_resume": {
+          const resumeRunId = params?.runId;
+          if (!resumeRunId) { result = { error: "Missing runId" }; break; }
+          try {
+            const engine = this.planner?.getWorkflowEngine();
+            if (!engine) { result = { error: "Workflow engine not initialized" }; break; }
+            const settings = getAppSettings();
+            const models = getModels();
+            const modelCfg = models.find((m: any) => m.id === settings?.activeModelId) || {};
+            await engine.resumeWorkflow(resumeRunId, modelCfg);
+            result = { success: true };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_inject": {
+          const injectRunId = params?.runId;
+          const injectNodeId = params?.nodeId;
+          const injectMessage = params?.message;
+          if (!injectRunId || !injectNodeId || !injectMessage) {
+            result = { error: "Missing runId, nodeId, or message" };
+            break;
+          }
+          try {
+            const engine = this.planner?.getWorkflowEngine();
+            if (!engine) { result = { error: "Workflow engine not initialized" }; break; }
+            engine.injectMessage(injectRunId, injectNodeId, injectMessage);
+            result = { success: true };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_logs": {
+          const logsRunId = params?.runId;
+          const logsNodeId = params?.nodeId;
+          if (!logsRunId) { result = { error: "Missing runId" }; break; }
+          try {
+            const run = workflowStore.getRun(logsRunId);
+            if (!run) { result = { error: `Run ${logsRunId} not found` }; break; }
+            if (logsNodeId) {
+              const nodeState = run.nodeStates[logsNodeId];
+              result = nodeState
+                ? { nodeId: logsNodeId, status: nodeState.status, logs: nodeState.logs, output: nodeState.output, iterations: nodeState.iterations }
+                : { error: `Node ${logsNodeId} not found in run` };
+            } else {
+              result = {
+                nodeStates: Object.fromEntries(
+                  Object.entries(run.nodeStates).map(([nid, ns]) => [
+                    nid,
+                    { status: ns.status, logs: ns.logs.slice(-10), iterations: ns.iterations },
+                  ]),
+                ),
+              };
+            }
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        case "workflow_delete": {
+          const deleteId = params?.id;
+          if (!deleteId) { result = { error: "Missing workflow id" }; break; }
+          try {
+            workflowStore.deleteWorkflow(deleteId);
+            result = { success: true };
+          } catch (e: any) {
+            result = { error: e.message };
+          }
+          break;
+        }
+
+        default:
+          result = { error: `Unknown action: ${action}` };
+      }
+    } catch (err: any) {
+      result = { error: err.message };
+    }
+
+    this.sendTo(ws, {
+      type: "remote_control_response",
+      payload: { requestId, action, result },
+      timestamp: Date.now(),
     });
   }
 }

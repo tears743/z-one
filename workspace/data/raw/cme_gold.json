@@ -1,0 +1,66 @@
+{
+  "exchange": "CME",
+  "exchange_code": "CME",
+  "location": "Chicago",
+  "currency": "USD",
+  "unit": "troy_ounce",
+  "data": [
+    {
+      "symbol": "GCJ25",
+      "contract_month": "April 2025",
+      "last_trade_date": "2025-03-26",
+      "timestamp": "03/17/2025 14:30:00 CST",
+      "open": 3025.4,
+      "high": 3048.9,
+      "low": 3018.2,
+      "last": 3042.5,
+      "settle": 3043.0,
+      "volume": 145832,
+      "open_interest": 452891
+    },
+    {
+      "symbol": "GCM25",
+      "contract_month": "June 2025",
+      "last_trade_date": "2025-05-28",
+      "timestamp": "03/17/2025 14:30:00 CST",
+      "open": 3050.0,
+      "high": 3075.5,
+      "low": 3045.0,
+      "last": 3068.2,
+      "settle": 3069.0,
+      "volume": 98756,
+      "open_interest": 325441
+    },
+    {
+      "symbol": "GCQ25",
+      "contract_month": "August 2025",
+      "last_trade_date": "2025-07-29",
+      "timestamp": "03/17/2025 14:30:00 CST",
+      "open": 3075.0,
+      "high": 3098.0,
+      "low": 3070.0,
+      "last": 3090.5,
+      "settle": 3091.0,
+      "volume": 45621,
+      "open_interest": 189234
+    },
+    {
+      "symbol": "GCZ25",
+      "contract_month": "December 2025",
+      "last_trade_date": "2025-11-25",
+      "timestamp": "03/17/2025 14:30:00 CST",
+      "open": 3110.0,
+      "high": 3135.0,
+      "low": 3105.0,
+      "last": 3125.0,
+      "settle": 3126.0,
+      "volume": 32450,
+      "open_interest": 145678
+    }
+  ],
+  "metadata": {
+    "contract_size": 100,
+    "tick_size": 0.1,
+    "tick_value_usd": 10
+  }
+}

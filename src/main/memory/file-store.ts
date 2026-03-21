@@ -6,6 +6,7 @@ import { logger } from "../logger";
 import { getAppSettings } from "../db";
 import { LLMService } from "../model/llm-service";
 import { estimateMessageTokens } from "../model/token-counter";
+import { PLANNER_ROLE_SUMMARY } from "../prompts/planner";
 
 export class FileSessionStore {
   private llmService: LLMService;
@@ -298,7 +299,7 @@ export class FileSessionStore {
         const compressedMessages: AgentMessage[] = [
           {
             role: "system",
-            content: `[Compressed History Summary]:\n${summaryResponse}`,
+            content: `${PLANNER_ROLE_SUMMARY}\n\n[Compressed History Summary]:\n${summaryResponse}`,
           },
           ...recentMessages,
         ];

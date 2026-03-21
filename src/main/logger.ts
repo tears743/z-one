@@ -1,14 +1,29 @@
-import { app } from "electron";
 import { join } from "path";
 import { appendFileSync, existsSync, mkdirSync } from "fs";
+
+// Graceful Electron import — fallback for CLI / non-Electron environments
+let electronApp: any = null;
+try {
+  electronApp = require("electron").app;
+} catch {
+  // Not running in Electron — that's fine
+}
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
 
 class Logger {
   private logPath: string;
+  private isPackaged: boolean;
 
   constructor() {
-    const userDataPath = app.getPath("userData");
+    let userDataPath: string;
+    try {
+      userDataPath = electronApp?.getPath?.("userData") || join(process.env.HOME || "/tmp", ".z-one");
+    } catch {
+      userDataPath = join(process.env.HOME || "/tmp", ".z-one");
+    }
+    this.isPackaged = electronApp?.isPackaged ?? true; // Default to packaged (no console) if unknown
+
     const logsDir = join(userDataPath, "logs");
 
     if (!existsSync(logsDir)) {
@@ -35,7 +50,7 @@ class Logger {
     const logEntry = this.formatMessage(level, message, meta);
 
     // Console output for dev
-    if (!app.isPackaged) {
+    if (!this.isPackaged) {
       // In Windows console, unicode characters might display incorrectly depending on code page.
       // But Node.js console.log generally handles UTF-8 well if the terminal supports it.
       // The issue might be double encoding or font.

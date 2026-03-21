@@ -1,6 +1,6 @@
 
 export interface InteractionMessage {
-  type: 'register' | 'register_ack' | 'auth_request' | 'auth_response' | 'message' | 'broadcast' | 'heartbeat' | 'session_request' | 'session_response' | 'session_history_request' | 'session_history_response' | 'device_list' | 'cancel_request' | 'request_cancelled';
+  type: 'register' | 'register_ack' | 'auth_request' | 'auth_response' | 'message' | 'broadcast' | 'heartbeat' | 'session_request' | 'session_response' | 'session_history_request' | 'session_history_response' | 'device_list' | 'cancel_request' | 'request_cancelled' | 'user_reply' | 'plan_approval_response' | 'remote_control' | 'remote_control_response';
   payload: any;
   timestamp: number;
 }
