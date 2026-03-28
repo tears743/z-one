@@ -1,0 +1,44 @@
+{
+  "strategy": [
+    {
+      "phase": "1",
+      "capital_range": "100 RMB to 1k RMB",
+      "objective": "Build capital with zero-risk methods.",
+      "methods": [
+        "Freelancing Microtasks on platforms like Freelancer",
+        "Online Surveys/Micro Tasks on platforms like Amazon Mechanical Turk"
+      ],
+      "risk_management": "Maintain a safety buffer of 100 RMB. Maximum loss: 0 RMB."
+    },
+    {
+      "phase": "2",
+      "capital_range": "1k RMB to 10k RMB",
+      "objective": "Scale operations with low-risk freelancing/digital products.",
+      "methods": [
+        "Digital Product Sales like eBook publishing or printables on Etsy",
+        "Freelance Specialization on higher-paying digital tasks"
+      ],
+      "risk_management": "Maximum acceptable loss: 200 RMB (20% of 1k RMB)"
+    },
+    {
+      "phase": "3",
+      "capital_range": "10k RMB to 100k RMB",
+      "objective": "Increase income through moderate scaling tactics.",
+      "methods": [
+        "Professional Services like digital marketing, web development, or graphic design",
+        "Online Courses/Workshops on platforms like Udemy"
+      ],
+      "risk_management": "Maximum acceptable loss: 2,000 RMB (20% of 10k RMB)"
+    },
+    {
+      "phase": "4",
+      "capital_range": "100k RMB to 1M RMB",
+      "objective": "Diversify investments to stabilize income streams.",
+      "methods": [
+        "Portfolio Building with low-risk stocks, mutual funds, or ETFs",
+        "Business Ventures in small-scale entrepreneurship or partnership"
+      ],
+      "risk_management": "Maximum acceptable loss: 20,000 RMB (20% of 100k RMB)"
+    }
+  ]
+}

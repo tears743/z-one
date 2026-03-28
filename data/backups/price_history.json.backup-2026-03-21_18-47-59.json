@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Price tracking history for competitor products",
+  "created_at": "2026-03-21T00:00:00.000Z",
+  "last_updated": "2026-03-21T00:00:00.000Z",
+  "records": [],
+  "schema": {
+    "type": "object",
+    "required": ["product_id", "competitor_name", "price", "currency", "timestamp"],
+    "properties": {
+      "record_id": {
+        "type": "string",
+        "description": "Unique identifier for this price record (UUID)",
+        "format": "uuid"
+      },
+      "product_id": {
+        "type": "string",
+        "description": "Product identifier (SKU or custom ID)",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "competitor_name": {
+        "type": "string",
+        "description": "Name of the competitor",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "price": {
+        "type": "number",
+        "description": "Product price as a decimal number",
+        "minimum": 0,
+        "exclusiveMaximum": 10000000
+      },
+      "currency": {
+        "type": "string",
+        "description": "ISO 4217 currency code",
+        "enum": ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CNY", "INR", "MXN", "BRL"]
+      },
+      "timestamp": {
+        "type": "string",
+        "description": "ISO 8601 timestamp when price was captured",
+        "format": "date-time"
+      },
+      "url": {
+        "type": "string",
+        "description": "Source URL where price was found",
+        "format": "uri",
+        "maxLength": 2048
+      },
+      "status": {
+        "type": "string",
+        "description": "Availability status of the product",
+        "enum": ["available", "out_of_stock", "discontinued", "price_on_request", "unknown"],
+        "default": "available"
+      },
+      "metadata": {
+        "type": "object",
+        "description": "Additional optional metadata",
+        "properties": {
+          "scraping_session_id": {
+            "type": "string",
+            "description": "Reference to the scraping session that captured this data"
+          },
+          "user_agent": {
+            "type": "string",
+            "description": "User agent used for scraping"
+          },
+          "response_time_ms": {
+            "type": "integer",
+            "description": "HTTP response time in milliseconds"
+          },
+          "promotional_price": {
+            "type": "boolean",
+            "description": "Whether this is a promotional/sale price"
+          },
+          "original_price": {
+            "type": "number",
+            "description": "Original price before discount"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Any additional notes about this price point"
+          }
+        }
+      }
+    }
+  },
+  "indexes": {
+    "by_product": ["product_id", "timestamp"],
+    "by_competitor": ["competitor_name", "timestamp"],
+    "by_time": ["timestamp"],
+    "by_competitor_product": ["competitor_name", "product_id", "timestamp"]
+  },
+  "constraints": {
+    "max_history_days": 365,
+    "archive_after_days": 90,
+    "max_records_per_query": 10000
+  }
+}

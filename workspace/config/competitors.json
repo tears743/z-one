@@ -1,0 +1,314 @@
+{
+  "_schema_version": "1.0.0",
+  "_description": "Competitor scraping configuration - defines extraction rules for each competitor site",
+  "_last_updated": "2026-03-21",
+  
+  "competitors": {
+    "amazon": {
+      "name": "Amazon",
+      "base_url": "https://www.amazon.com",
+      "enabled": true,
+      "selectors": {
+        "product_page": {
+          "price": {
+            "primary": "#priceblock_dealprice",
+            "fallbacks": ["#priceblock_ourprice", ".a-price.a-text-price.a-size-medium.apexPriceToPay .a-offscreen", ".a-price.a-text-price .a-offscreen", ".a-price-range .a-offscreen"],
+            "attribute": "textContent",
+            "regex_pattern": "\\$?([0-9,]+\\.?[0-9]*)",
+            "currency_symbol": "$"
+          },
+          "product_name": {
+            "primary": "#productTitle",
+            "fallbacks": ["#title"],
+            "attribute": "textContent",
+            "strip_whitespace": true,
+            "max_length": 255
+          },
+          "availability": {
+            "selector": "#availability span",
+            "in_stock_keywords": ["in stock", "available"],
+            "out_of_stock_keywords": ["out of stock", "unavailable", "currently unavailable"]
+          },
+          "rating": {
+            "selector": "[data-hook='average-star-rating'] .a-icon-alt",
+            "attribute": "textContent",
+            "regex_pattern": "([0-9.]+) out of 5"
+          },
+          "review_count": {
+            "selector": "[data-hook='total-review-count']",
+            "attribute": "textContent",
+            "regex_pattern": "([0-9,]+)"
+          },
+          "image": {
+            "primary": "#landingImage",
+            "attribute": "src",
+            "fallback_attribute": "data-old-hires"
+          }
+        },
+        "search_results": {
+          "product_container": "[data-component-type='s-search-result']",
+          "price": ".a-price .a-offscreen",
+          "product_name": "h2 a span",
+          "link": "h2 a",
+          "rating": ".a-icon-alt",
+          "image": ".s-image"
+        }
+      },
+      "currency": {
+        "code": "USD",
+        "symbol": "$",
+        "position": "prefix",
+        "thousands_separator": ",",
+        "decimal_separator": "."
+      },
+      "request_config": {
+        "headers": {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate, br",
+          "DNT": "1",
+          "Connection": "keep-alive",
+          "Upgrade-Insecure-Requests": "1",
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "none",
+          "Sec-Fetch-User": "?1",
+          "Cache-Control": "max-age=0"
+        },
+        "cookies": {
+          "session-id": "",
+          "session-id-time": "",
+          "i18n-prefs": "USD"
+        },
+        "timeout_seconds": 30,
+        "follow_redirects": true,
+        "max_redirects": 5
+      },
+      "retry_config": {
+        "max_retries": 3,
+        "retry_delay_seconds": 2,
+        "backoff_multiplier": 2,
+        "retry_on_status_codes": [503, 504, 429, 500],
+        "retry_on_exceptions": ["TimeoutError", "ConnectionError", "TooManyRedirects"]
+      },
+      "rate_limiting": {
+        "requests_per_minute": 30,
+        "delay_between_requests_ms": 2000,
+        "jitter_ms": 500
+      },
+      "anti_detection": {
+        "use_proxy_rotation": true,
+        "rotate_user_agents": true,
+        "randomize_viewport": true,
+        "simulate_human_behavior": true,
+        "mouse_movement_probability": 0.7
+      }
+    },
+
+    "shopify_generic": {
+      "name": "Generic Shopify Store",
+      "base_url": "https://example-shop.myshopify.com",
+      "enabled": true,
+      "selectors": {
+        "product_page": {
+          "price": {
+            "primary": "[data-product-price] .money",
+            "fallbacks": [".product-price .money", ".price .money", ".product-single__price", "[data-price]"],
+            "attribute": "textContent",
+            "regex_pattern": "([0-9.,]+)",
+            "currency_symbol": "$"
+          },
+          "product_name": {
+            "primary": "h1.product-single__title",
+            "fallbacks": [".product-title", "h1.title", ".product-name h1"],
+            "attribute": "textContent",
+            "strip_whitespace": true,
+            "max_length": 255
+          },
+          "availability": {
+            "selector": "[data-product-availability]",
+            "in_stock_keywords": ["in stock", "available"],
+            "out_of_stock_keywords": ["out of stock", "sold out"]
+          },
+          "variant_selectors": {
+            "size": "[name='id'] option, .variant-input input",
+            "color": "[data-color-option], .color-swatch"
+          },
+          "image": {
+            "primary": ".product-single__media img",
+            "attribute": "src",
+            "fallback_attribute": "data-src"
+          },
+          "description": {
+            "selector": ".product-description",
+            "attribute": "innerHTML"
+          }
+        },
+        "search_results": {
+          "product_container": ".product-card, .grid__item",
+          "price": ".product-card__price",
+          "product_name": ".product-card__title",
+          "link": ".product-card__link",
+          "image": ".product-card__image"
+        },
+        "json_ld": {
+          "enabled": true,
+          "price_path": "$.offers.price",
+          "currency_path": "$.offers.priceCurrency",
+          "name_path": "$.name",
+          "availability_path": "$.offers.availability"
+        }
+      },
+      "currency": {
+        "code": "USD",
+        "symbol": "$",
+        "position": "prefix",
+        "thousands_separator": ",",
+        "decimal_separator": "."
+      },
+      "request_config": {
+        "headers": {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+          "Accept-Encoding": "gzip, deflate, br",
+          "DNT": "1",
+          "Connection": "keep-alive"
+        },
+        "timeout_seconds": 25,
+        "follow_redirects": true,
+        "max_redirects": 3
+      },
+      "retry_config": {
+        "max_retries": 3,
+        "retry_delay_seconds": 1.5,
+        "backoff_multiplier": 1.5,
+        "retry_on_status_codes": [429, 500, 502, 503, 504],
+        "retry_on_exceptions": ["TimeoutError", "ConnectionError"]
+      },
+      "rate_limiting": {
+        "requests_per_minute": 60,
+        "delay_between_requests_ms": 1000,
+        "jitter_ms": 300
+      },
+      "anti_detection": {
+        "use_proxy_rotation": false,
+        "rotate_user_agents": true,
+        "randomize_viewport": false,
+        "simulate_human_behavior": false
+      },
+      "shopify_specific": {
+        "use_ajax_api": true,
+        "product_json_endpoint": "/products/{handle}.json",
+        "cart_add_endpoint": "/cart/add.js",
+        "requires_storefront_token": false
+      }
+    },
+
+    "generic_ecommerce": {
+      "name": "Generic E-commerce Template",
+      "base_url": "https://example-store.com",
+      "enabled": false,
+      "description": "Generic template for custom e-commerce sites - customize selectors based on target site structure",
+      "selectors": {
+        "product_page": {
+          "price": {
+            "primary": ".price",
+            "fallbacks": [".product-price", ".current-price", "[data-price]"],
+            "attribute": "textContent",
+            "regex_pattern": "([0-9.,]+)",
+            "currency_symbol": null,
+            "currency_detection": "auto"
+          },
+          "product_name": {
+            "primary": "h1.product-name",
+            "fallbacks": ["h1", ".product-title", "[data-product-name]"],
+            "attribute": "textContent",
+            "strip_whitespace": true,
+            "max_length": 255
+          },
+          "availability": {
+            "selector": ".availability, .stock-status",
+            "in_stock_keywords": ["in stock", "available", "in_stock", "instock"],
+            "out_of_stock_keywords": ["out of stock", "unavailable", "out_of_stock", "oos"]
+          },
+          "sku": {
+            "selector": ".sku, [data-sku]",
+            "attribute": "textContent"
+          },
+          "image": {
+            "primary": ".product-image img",
+            "attribute": "src"
+          }
+        },
+        "search_results": {
+          "product_container": ".product-item, .product",
+          "price": ".price",
+          "product_name": ".product-name",
+          "link": "a",
+          "image": "img"
+        }
+      },
+      "currency": {
+        "code": "AUTO_DETECT",
+        "supported_currencies": ["USD", "EUR", "GBP", "CAD", "AUD"],
+        "auto_detection_patterns": {
+          "USD": ["\\$", "USD", "US\\s*\\$"],
+          "EUR": ["€", "EUR", "EURO"],
+          "GBP": ["£", "GBP", "pounds"],
+          "CAD": ["C\\$", "CAD", "CA\\$"],
+          "AUD": ["A\\$", "AUD", "AU\\$"]
+        },
+        "position": "auto",
+        "thousands_separator": "auto",
+        "decimal_separator": "auto"
+      },
+      "request_config": {
+        "headers": {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate",
+          "DNT": "1",
+          "Connection": "keep-alive"
+        },
+        "timeout_seconds": 20,
+        "follow_redirects": true,
+        "max_redirects": 5
+      },
+      "retry_config": {
+        "max_retries": 3,
+        "retry_delay_seconds": 2,
+        "backoff_multiplier": 2,
+        "retry_on_status_codes": [429, 500, 502, 503, 504],
+        "retry_on_exceptions": ["TimeoutError", "ConnectionError", "HTTPError"]
+      },
+      "rate_limiting": {
+        "requests_per_minute": 45,
+        "delay_between_requests_ms": 1500,
+        "jitter_ms": 400
+      },
+      "anti_detection": {
+        "use_proxy_rotation": false,
+        "rotate_user_agents": true,
+        "randomize_viewport": true,
+        "simulate_human_behavior": true
+      },
+      "debug": {
+        "log_selector_matches": false,
+        "save_failed_html": false,
+        "screenshot_on_failure": false
+      }
+    }
+  },
+
+  "global_settings": {
+    "default_request_timeout": 30,
+    "default_max_retries": 3,
+    "default_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "respect_robots_txt": true,
+    "concurrent_requests": 5,
+    "log_level": "INFO"
+  }
+}

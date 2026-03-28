@@ -6,6 +6,9 @@ import { GetCurrentTimeTool } from "../time";
 
 import { RunCommandTool } from "../cli";
 import { SchedulerTools } from "../scheduler";
+import { WorkflowTools } from "../workflow";
+import { RequestUserInputTool } from "../user-input";
+import { SetWorkflowContextTool } from "../workflow-context";
 
 export const nativeTools = [
   ReadFileTool,
@@ -16,4 +19,7 @@ export const nativeTools = [
   GetCurrentTimeTool,
   RunCommandTool,
   ...SchedulerTools,
+  ...WorkflowTools,
+  RequestUserInputTool,
+  SetWorkflowContextTool,
 ];

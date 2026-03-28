@@ -12,6 +12,8 @@ import { ChatInput } from "./components/ChatInput";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
+import { WorkflowListPage } from "./components/WorkflowListPage";
+import { WorkflowDetailPage } from "./components/WorkflowDetailPage";
 import { loadSettings, saveSettings } from "./hooks/useSettings";
 import { loadSessions, saveCurrentSession } from "./hooks/useSessions";
 import { LogMessage } from "./types/message";
@@ -36,6 +38,10 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // View mode: chat or workflow
+  const [viewMode, setViewMode] = useState<'chat' | 'workflow'>('chat');
+  const [selectedWorkflow, setSelectedWorkflow] = useState<any | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentSessionIdRef = useRef<string>("");
@@ -117,13 +123,24 @@ function App() {
               last.details?.isStreaming
             ) {
               // Capture thoughts from the streaming content before replacing it
-              const existingThoughts = last.content
+              const lastContentStr =
+                typeof last.content === "string"
+                  ? last.content
+                  : Array.isArray(last.content)
+                    ? last.content
+                        .map((c: any) =>
+                          typeof c === "string" ? c : c.text || "",
+                        )
+                        .join("\n")
+                    : String(last.content ?? "");
+              const existingThoughts = lastContentStr
                 .split("\n")
-                .map((l) => l.trim())
+                .map((l: string) => l.trim())
                 .filter(
-                  (l) => l.startsWith("*") && l.endsWith("*") && l.length > 2,
+                  (l: string) =>
+                    l.startsWith("*") && l.endsWith("*") && l.length > 2,
                 )
-                .map((l) => l.slice(1, -1));
+                .map((l: string) => l.slice(1, -1));
 
               const allThoughts = [
                 ...(last.details?.thoughts || []),
@@ -549,27 +566,61 @@ function App() {
           onWindowCommand={handleWindowCommand}
           canControlWindow={!!(window.electron && window.electron.ipcRenderer)}
           onReconnect={() => interactionClient.reconnect()}
-        />
-
-        <MessageList
-          messages={messages}
-          messagesEndRef={messagesEndRef as React.RefObject<HTMLDivElement>}
-        />
-
-        <ChatInput
-          disabled={interactionStatus !== "connected"}
-          // Add required props for ChatInput
-          models={settings.models.filter((m) => m.enabled)}
-          activeModelId={settings.activeModelId}
-          onModelChange={(id) => {
-            const newSettings = { ...settings, activeModelId: id };
-            saveSettings(newSettings, setSettings);
+          viewMode={viewMode}
+          onViewModeChange={(mode) => {
+            setViewMode(mode);
+            if (mode === 'chat') setSelectedWorkflow(null);
+            if (mode === 'workflow') setIsSidebarOpen(false);
           }}
-          onSend={handleSendMessage} // Use handleSendMessage as onSend
-          onCancel={handleCancelRequest}
-          loading={isGenerating}
-          language={settings.general.language}
         />
+
+        {viewMode === 'chat' ? (
+          <>
+            <MessageList
+              messages={messages}
+              messagesEndRef={messagesEndRef as React.RefObject<HTMLDivElement>}
+              onWorkflowConfirm={async (proposal) => {
+                console.log('[App] Confirming workflow:', proposal.workflow.id);
+                const wf = await (window as any).api.workflow.confirmProposal(proposal);
+                console.log('[App] Confirm result:', wf);
+                if (wf) {
+                  setViewMode('workflow');
+                  setSelectedWorkflow(wf);
+                  setIsSidebarOpen(false);
+                } else {
+                  throw new Error(`Workflow creation failed for ${proposal.workflow.id}`);
+                }
+              }}
+            />
+
+            <ChatInput
+              disabled={interactionStatus !== "connected"}
+              models={settings.models.filter((m) => m.enabled)}
+              activeModelId={settings.activeModelId}
+              onModelChange={(id) => {
+                const newSettings = { ...settings, activeModelId: id };
+                saveSettings(newSettings, setSettings);
+              }}
+              onSend={handleSendMessage}
+              onCancel={handleCancelRequest}
+              loading={isGenerating}
+              language={settings.general.language}
+            />
+          </>
+        ) : (
+          selectedWorkflow ? (
+            <WorkflowDetailPage
+              workflow={selectedWorkflow}
+              onBack={() => setSelectedWorkflow(null)}
+              trans={trans}
+            />
+          ) : (
+            <WorkflowListPage
+              onSelectWorkflow={(w) => setSelectedWorkflow(w)}
+              trans={trans}
+            />
+          )
+        )}
       </div>
 
       <SettingsModal

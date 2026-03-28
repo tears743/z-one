@@ -45,9 +45,9 @@ export class Planner {
     content:
       | string
       | Array<
-          | { type: "text"; text: string }
-          | { type: "image_url"; image_url: { url: string } }
-        >,
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >,
     modelConfig: any,
     onStream?: (chunk: string) => void,
     rawSessionId: string = "global",
@@ -183,38 +183,93 @@ export class Planner {
 
     logger.info(`Triage Result: ${JSON.stringify(triageResult)}`);
 
-    if (!triageResult.isComplex) {
-      // Direct Reply
-      logger.info("Handling as simple task (Direct Reply)");
-      const response = triageResult.directResponse || "I see.";
+    // Route based on triage LLM decision
+    switch (triageResult.routeTo) {
+      case "direct": {
+        // Direct Reply
+        logger.info("Handling as simple task (Direct Reply)");
+        const response = triageResult.directResponse || "I see.";
 
-      if (onStream) {
-        onStream(response);
+        if (onStream) {
+          onStream(response);
+        }
+
+        // Persist to File Session
+        try {
+          await this.sessionStore.appendMessage(sessionId, {
+            role: "assistant",
+            content: response,
+          });
+        } catch (e) {
+          logger.error("Failed to persist simple response to file session", e);
+        }
+        return response;
       }
 
-      // Persist to Vector Memory - Temporarily disabled
-      // try {
-      //   await addMemory(
-      //     response,
-      //     "user",
-      //     "assistant",
-      //     ["interaction", deviceId],
-      //     sessionId,
-      //   );
-      // } catch (e) {
-      //   logger.error("Failed to persist simple response to vector memory", e);
-      // }
+      case "create_workflow": {
+        // Workflow Creation — routed by LLM triage
+        logger.info("Detected workflow creation request via LLM triage, routing to create_workflow tool");
 
-      // Persist to File Session
-      try {
-        await this.sessionStore.appendMessage(sessionId, {
-          role: "assistant",
-          content: response,
-        });
-      } catch (e) {
-        logger.error("Failed to persist simple response to file session", e);
+        if (onStream) {
+          onStream('\n*Creating workflow...*\n');
+        }
+
+        try {
+          const toolResult = await this.toolRegistry.callTool('create_workflow', {
+            description: refinedIntent,
+            chat_context: contextHistory,
+          });
+
+          const resultText = (toolResult?.content?.[0] as any)?.text || '{}';
+          const resultData = JSON.parse(resultText);
+
+          if (resultData?.error) {
+            const errMsg = `创建工作流失败: ${resultData.error}`;
+            if (onStream) onStream(errMsg);
+            return errMsg;
+          }
+
+          const wf = resultData.workflow;
+          const nodesList = (wf.nodes || [])
+            .map((n: any, i: number) => `${i + 1}. **${n.label}** (${n.type})${n.tools?.length ? ' — Tools: ' + n.tools.join(', ') : ''}`)
+            .join('\n');
+
+          const proposalMsg =
+            `我已经为你生成了一个工作流方案：\n\n` +
+            `### 📋 ${wf.name}\n` +
+            `${wf.description || ''}\n\n` +
+            `**节点 (${wf.nodeCount}):**\n${nodesList}\n\n` +
+            `\`\`\`json\n${JSON.stringify({ type: 'workflow_proposal', workflow: wf }, null, 2)}\n\`\`\`\n\n` +
+            `你可以在上方的卡片中点击 **确认创建** 来激活这个工作流。`;
+
+          if (onStream) {
+            onStream(proposalMsg);
+          }
+
+          try {
+            await this.sessionStore.appendMessage(sessionId, {
+              role: 'assistant',
+              content: proposalMsg,
+            });
+          } catch (e) {
+            logger.error('Failed to persist workflow proposal to session', e);
+          }
+
+          return proposalMsg;
+        } catch (err: any) {
+          logger.error('Failed to create workflow via tool:', err);
+          const errMsg = `创建工作流时出错: ${err.message}`;
+          if (onStream) onStream(errMsg);
+          return errMsg;
+        }
       }
-      return response;
+
+      case "team":
+      default: {
+        // Complex Task -> Team Orchestrator (Swarm Mode)
+        logger.info("Routing to Team Orchestrator (Swarm Mode)");
+        break; // Fall through to team execution below
+      }
     }
 
     // 4. Complex Task -> Team Orchestrator (Swarm Mode)

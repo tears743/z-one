@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0.0",
+  "description": "State tracking for price monitoring application",
+  "last_updated": "2026-03-21T18:44:49.915Z",
+  "application_state": {
+    "status": "initialized",
+    "startup_count": 0,
+    "first_run": "2026-03-21T00:00:00.000Z"
+  },
+  "scraping_state": {
+    "last_run": "2026-03-21T18:44:49.915Z",
+    "last_successful_run": null,
+    "last_failed_run": null,
+    "total_runs": 0,
+    "successful_runs": 0,
+    "failed_runs": 0,
+    "consecutive_failures": 0,
+    "last_error": null,
+    "current_session_id": "71b0b429-bc23-4762-9a8d-46c0a40815ab",
+    "active_jobs": []
+  },
+  "data_state": {
+    "last_record_count": 0,
+    "last_archive_date": null,
+    "pending_backups": [],
+    "storage_size_bytes": 0
+  },
+  "scheduling": {
+    "next_scheduled_run": null,
+    "cron_expression": null,
+    "timezone": "UTC",
+    "enabled": false
+  },
+  "schema": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "initialized",
+        "running",
+        "idle",
+        "error",
+        "maintenance"
+      ],
+      "description": "Current application status"
+    },
+    "scraping_run": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Unique identifier for the scraping session"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer"
+        },
+        "products_checked": {
+          "type": "integer"
+        },
+        "prices_captured": {
+          "type": "integer"
+        },
+        "errors_encountered": {
+          "type": "integer"
+        },
+        "competitors_processed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "error_record": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stack": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

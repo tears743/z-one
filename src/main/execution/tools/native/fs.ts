@@ -25,11 +25,11 @@ const resolvePath = (filePath: string) => {
 
 export const ReadFileTool: NativeTool = {
     name: "read_file",
-    description: "Read content of a file. Supports relative paths from Agent Workspace.",
+    description: "Read content of a file. IMPORTANT: Use relative paths (e.g. 'notes/todo.md'). Relative paths are automatically resolved under the configured Agent Workspace directory. Absolute paths are used as-is.",
     inputSchema: {
         type: "object",
         properties: {
-            path: { type: "string", description: "Path to the file (Absolute or Relative to Workspace)" }
+            path: { type: "string", description: "Relative path preferred (e.g. 'data/config.json'). The system will automatically prepend the workspace directory to relative paths. Only use absolute paths if you need to access files outside the workspace." }
         },
         required: ["path"]
     },
@@ -46,11 +46,11 @@ export const ReadFileTool: NativeTool = {
 
 export const WriteFileTool: NativeTool = {
     name: "write_file",
-    description: "Write content to a file. Supports relative paths from Agent Workspace.",
+    description: "Write content to a file. IMPORTANT: Use relative paths (e.g. 'output/report.md'). Relative paths are automatically resolved under the configured Agent Workspace directory. Parent directories are created automatically.",
     inputSchema: {
         type: "object",
         properties: {
-            path: { type: "string", description: "Path to the file (Absolute or Relative to Workspace)" },
+            path: { type: "string", description: "Relative path preferred (e.g. 'output/report.md'). The system will automatically prepend the workspace directory to relative paths. Only use absolute paths if you need to write outside the workspace." },
             content: { type: "string", description: "Content to write" }
         },
         required: ["path", "content"]
@@ -72,11 +72,11 @@ export const WriteFileTool: NativeTool = {
 
 export const ListDirTool: NativeTool = {
     name: "list_dir",
-    description: "List files in a directory. Supports relative paths from Agent Workspace.",
+    description: "List files in a directory. IMPORTANT: Use relative paths (e.g. '.' for workspace root, 'docs' for docs subfolder). Relative paths are automatically resolved under the configured Agent Workspace directory.",
     inputSchema: {
         type: "object",
         properties: {
-            path: { type: "string", description: "Path to the directory (Absolute or Relative to Workspace)" }
+            path: { type: "string", description: "Relative path preferred (e.g. '.' for workspace root). The system will automatically prepend the workspace directory to relative paths. Only use absolute paths if you need to list outside the workspace." }
         },
         required: ["path"]
     },

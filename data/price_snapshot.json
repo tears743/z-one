@@ -1,0 +1,55 @@
+{
+  "snapshot_id": "snap-20260321-001",
+  "extracted_at": "2026-03-21T10:15:30Z",
+  "source": "competitor_crawler",
+  "extraction_method": "puppeteer",
+  "products": {
+    "PROD-001": {
+      "product_id": "PROD-001",
+      "product_name": "Wireless Bluetooth Headphones",
+      "price": "69.99",
+      "currency": "USD",
+      "availability": true,
+      "url": "https://example.com/products/headphones",
+      "source": "api",
+      "extracted_at": "2026-03-21T10:15:30Z"
+    },
+    "PROD-002": {
+      "product_id": "PROD-002",
+      "product_name": "Smart Fitness Watch",
+      "price": "219.99",
+      "currency": "USD",
+      "availability": true,
+      "url": "https://example.com/products/fitness-watch",
+      "source": "api",
+      "extracted_at": "2026-03-21T10:15:30Z"
+    },
+    "PROD-003": {
+      "product_id": "PROD-003",
+      "product_name": "4K Ultra HD Webcam",
+      "price": "129.99",
+      "currency": "USD",
+      "availability": true,
+      "url": "https://example.com/products/webcam-4k",
+      "source": "api",
+      "extracted_at": "2026-03-21T10:15:30Z"
+    },
+    "PROD-004": {
+      "product_id": "PROD-004",
+      "product_name": "Mechanical Gaming Keyboard",
+      "price": "149.99",
+      "currency": "USD",
+      "availability": false,
+      "url": "https://example.com/products/gaming-keyboard",
+      "source": "api",
+      "extracted_at": "2026-03-21T10:15:30Z"
+    }
+  },
+  "metadata": {
+    "crawl_duration_ms": 2847,
+    "successful_extractions": 4,
+    "failed_extractions": 0,
+    "crawler_version": "1.2.0",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  }
+}

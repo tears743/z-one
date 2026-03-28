@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.0.0",
+  "description": "State tracking for price monitoring application",
+  "last_updated": "2026-03-21T18:47:59.259Z",
+  "application_state": {
+    "status": "initialized",
+    "startup_count": 0,
+    "first_run": "2026-03-21T00:00:00.000Z"
+  },
+  "scraping_state": {
+    "last_run": "2026-03-21T18:47:59.259Z",
+    "last_successful_run": "2026-03-21T18:47:59.259Z",
+    "last_failed_run": "2026-03-21T18:44:49.918Z",
+    "total_runs": 2,
+    "successful_runs": 1,
+    "failed_runs": 1,
+    "consecutive_failures": 0,
+    "last_error": {
+      "timestamp": "2026-03-21T18:44:49.918Z",
+      "message": "dataStore.atomicWrite is not a function",
+      "code": "UNKNOWN_ERROR"
+    },
+    "current_session_id": "062d32b4-5919-41d5-9d6b-dca2d4d5e568",
+    "active_jobs": []
+  },
+  "data_state": {
+    "last_record_count": 1,
+    "last_archive_date": null,
+    "pending_backups": [],
+    "storage_size_bytes": 0,
+    "last_analysis_at": "2026-03-21T18:47:59.258Z"
+  },
+  "scheduling": {
+    "next_scheduled_run": null,
+    "cron_expression": null,
+    "timezone": "UTC",
+    "enabled": false
+  },
+  "schema": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "initialized",
+        "running",
+        "idle",
+        "error",
+        "maintenance"
+      ],
+      "description": "Current application status"
+    },
+    "scraping_run": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Unique identifier for the scraping session"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer"
+        },
+        "products_checked": {
+          "type": "integer"
+        },
+        "prices_captured": {
+          "type": "integer"
+        },
+        "errors_encountered": {
+          "type": "integer"
+        },
+        "competitors_processed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "error_record": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stack": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "run_history": [
+    {
+      "session_id": "062d32b4-5919-41d5-9d6b-dca2d4d5e568",
+      "timestamp": "2026-03-21T18:47:59.259Z",
+      "success": true,
+      "run_id": "00ba176c-23a0-4a8b-9066-6b90863d36f2",
+      "duration_ms": 6,
+      "products_checked": 1,
+      "successful_extractions": 1,
+      "changes_detected": false,
+      "alert_generated": false,
+      "alert_file": null
+    },
+    {
+      "session_id": "7f501183-dacc-4e9d-bfd4-9f11189c1fb9",
+      "timestamp": "2026-03-21T18:44:49.918Z",
+      "success": false,
+      "run_id": "71b0b429-bc23-4762-9a8d-46c0a40815ab",
+      "duration_ms": 4,
+      "error": {
+        "message": "dataStore.atomicWrite is not a function",
+        "code": "UNKNOWN_ERROR",
+        "stack": "TypeError: dataStore.atomicWrite is not a function\n    at updatePriceHistory (/Users/tj/workspace/z-one/scripts/analyzer.js:466:33)\n    at analyzePrices (/Users/tj/workspace/z-one/scripts/analyzer.js:534:20)\n    at runMonitoring (/Users/tj/workspace/z-one/scripts/monitor.js:345:25)\n    at async main (/Users/tj/workspace/z-one/scripts/monitor.js:624:21)"
+      }
+    }
+  ],
+  "last_analysis": {
+    "run_id": "00ba176c-23a0-4a8b-9066-6b90863d36f2",
+    "products_checked": 1,
+    "changes_detected": 0,
+    "new_products": 1,
+    "price_drops": 0,
+    "price_increases": 0,
+    "timestamp": "2026-03-21T18:47:59.258Z"
+  }
+}

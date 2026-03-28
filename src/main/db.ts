@@ -7,8 +7,13 @@ import {
 
 let db: Database.Database;
 
+import { initWorkflowTables } from './workflow/store';
+
 export function initDB(path: string) {
   db = new Database(path);
+
+  // Initialize workflow tables
+  initWorkflowTables(db);
 
   // Create generic settings table (key-value store)
   db.exec(`

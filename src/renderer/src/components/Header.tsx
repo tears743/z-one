@@ -8,6 +8,8 @@ import {
   X,
   Monitor,
   MonitorOff,
+  MessageCircle,
+  GitBranch,
 } from "lucide-react";
 import { DeviceInfo } from "../services/interaction-client";
 
@@ -23,6 +25,8 @@ interface HeaderProps {
   ) => void;
   canControlWindow: boolean;
   onReconnect: () => void;
+  viewMode?: 'chat' | 'workflow';
+  onViewModeChange?: (mode: 'chat' | 'workflow') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,6 +39,8 @@ export const Header: React.FC<HeaderProps> = ({
   onWindowCommand,
   canControlWindow,
   onReconnect,
+  viewMode = 'chat',
+  onViewModeChange,
 }) => {
   const [showDeviceList, setShowDeviceList] = useState(false);
 
@@ -217,6 +223,26 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
       </div>
+
+      {/* View Mode Tabs */}
+      {onViewModeChange && (
+        <div className="header-view-tabs">
+          <button
+            className={`header-tab ${viewMode === 'chat' ? 'active' : ''}`}
+            onClick={() => onViewModeChange('chat')}
+          >
+            <MessageCircle size={14} />
+            <span>Chat</span>
+          </button>
+          <button
+            className={`header-tab ${viewMode === 'workflow' ? 'active' : ''}`}
+            onClick={() => onViewModeChange('workflow')}
+          >
+            <GitBranch size={14} />
+            <span>Workflow</span>
+          </button>
+        </div>
+      )}
 
       <div className="window-controls">
         <button

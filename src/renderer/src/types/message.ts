@@ -3,7 +3,7 @@ export interface LogMessage {
   timestamp: number;
   role: "user" | "assistant" | "system";
   sender?: string;
-  content: string;
+  content: string | any[];
   details?: any;
 }
 

@@ -5,19 +5,35 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
 import { LogMessage } from "../types/message";
 import { SwarmBoard } from "./SwarmBoard";
+import { GitBranch, Check, X, RefreshCw } from "lucide-react";
 
 interface MessageListProps {
   messages: LogMessage[];
   messagesEndRef: React.RefObject<HTMLDivElement>;
+  onWorkflowConfirm?: (proposal: any) => Promise<void> | void;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
   messages,
   messagesEndRef,
+  onWorkflowConfirm,
 }) => {
   const [expandedThoughts, setExpandedThoughts] = useState<
     Record<string, boolean>
   >({});
+  const [confirmedWorkflows, setConfirmedWorkflows] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('confirmedWorkflows');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [dismissedWorkflows, setDismissedWorkflows] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('dismissedWorkflows');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const [confirmingWorkflow, setConfirmingWorkflow] = useState<string | null>(null);
 
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const wasAtBottomRef = useRef(true);
@@ -54,6 +70,131 @@ export const MessageList: React.FC<MessageListProps> = ({
       ...prev,
       [messageId]: !prev[messageId],
     }));
+  };
+
+  // Extract workflow proposal from message content or details
+  const extractWorkflowProposal = (msg: LogMessage): any | null => {
+    // Check details for workflow proposal
+    if (msg.details?.workflowProposal) {
+      return msg.details.workflowProposal;
+    }
+    // Try to find workflow_proposal JSON in content
+    const content = typeof msg.content === 'string' ? msg.content : '';
+    const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        if (parsed.type === 'workflow_proposal') return parsed;
+      } catch { /* not JSON */ }
+    }
+    // Check for inline JSON with workflow_proposal type
+    try {
+      if (content.includes('"type"') && content.includes('workflow_proposal')) {
+        // Find the JSON object
+        const start = content.indexOf('{');
+        const end = content.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          const parsed = JSON.parse(content.substring(start, end + 1));
+          if (parsed.type === 'workflow_proposal') return parsed;
+        }
+      }
+    } catch { /* not JSON */ }
+    return null;
+  };
+
+  const handleConfirmWorkflow = async (proposal: any) => {
+    const workflowId = proposal.workflow.id;
+    if (confirmingWorkflow) return; // Prevent double-click
+    setConfirmingWorkflow(workflowId);
+    try {
+      // Persist to sessionStorage BEFORE calling onWorkflowConfirm,
+      // because confirm triggers view switch which unmounts this component
+      const updated = new Set(confirmedWorkflows).add(workflowId);
+      sessionStorage.setItem('confirmedWorkflows', JSON.stringify([...updated]));
+      setConfirmedWorkflows(updated);
+      await onWorkflowConfirm?.(proposal);
+    } catch (e) {
+      // Rollback on failure
+      const rollback = new Set(confirmedWorkflows);
+      rollback.delete(workflowId);
+      sessionStorage.setItem('confirmedWorkflows', JSON.stringify([...rollback]));
+      setConfirmedWorkflows(rollback);
+      console.error('Failed to confirm workflow:', e);
+    } finally {
+      setConfirmingWorkflow(null);
+    }
+  };
+
+  const handleDismissWorkflow = (workflowId: string) => {
+    setDismissedWorkflows(prev => {
+      const next = new Set(prev).add(workflowId);
+      sessionStorage.setItem('dismissedWorkflows', JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  const renderWorkflowProposalCard = (proposal: any, msgId: string) => {
+    const wf = proposal.workflow;
+    const isConfirmed = confirmedWorkflows.has(wf.id);
+    const isDismissed = dismissedWorkflows.has(wf.id);
+    return (
+      <div className="workflow-proposal-card" key={`wf-${msgId}`}>
+        <div className="proposal-header">
+          <GitBranch size={18} />
+          <span className="proposal-title">{wf.name}</span>
+          <span className="proposal-badge">{wf.nodeCount} nodes</span>
+        </div>
+        {wf.description && (
+          <p className="proposal-desc">{wf.description}</p>
+        )}
+        <div className="proposal-nodes">
+          {(wf.nodes || []).map((node: any, i: number) => (
+            <div key={node.id} className="proposal-node-item">
+              <span className="proposal-node-type" data-type={node.type}>
+                {node.type}
+              </span>
+              <span className="proposal-node-label">{node.label}</span>
+              {node.tools && node.tools.length > 0 && (
+                <span className="proposal-node-tools">
+                  {node.tools.slice(0, 3).join(', ')}
+                  {node.tools.length > 3 && ` +${node.tools.length - 3}`}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+        {isConfirmed ? (
+          <div className="proposal-confirmed">
+            <Check size={14} /> 工作流已创建，可在 Workflow 页面查看
+          </div>
+        ) : isDismissed ? (
+          <div className="proposal-confirmed" style={{ opacity: 0.6 }}>
+            <X size={14} /> 已忽略
+          </div>
+        ) : (
+          <div className="proposal-actions">
+            <button
+              className="btn btn-primary btn-sm proposal-confirm-btn"
+              onClick={() => handleConfirmWorkflow(proposal)}
+              disabled={confirmingWorkflow === wf.id}
+            >
+              {confirmingWorkflow === wf.id ? (
+                <><RefreshCw size={14} className="spin" /> 创建中...</>
+              ) : (
+                <><Check size={14} /> 确认创建</>
+              )}
+            </button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => handleDismissWorkflow(wf.id)}
+              disabled={!!confirmingWorkflow}
+            >
+              <X size={14} /> 暂不需要
+            </button>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const renderMessageContent = (msg: LogMessage) => {
@@ -112,8 +253,18 @@ export const MessageList: React.FC<MessageListProps> = ({
       }
     }
 
+    // Normalize content to string (it may be an array or object from some APIs)
+    const rawContent =
+      typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content
+              .map((c: any) => (typeof c === "string" ? c : c.text || ""))
+              .join("\n")
+          : String(msg.content ?? "");
+
     // Split content by thinking blocks
-    const lines = msg.content.split("\n");
+    const lines = rawContent.split("\n");
     const thoughtLines: string[] = [];
     const contentLines: string[] = [];
 
@@ -344,21 +495,12 @@ export const MessageList: React.FC<MessageListProps> = ({
           </ReactMarkdown>
         </div>
 
-        {/* {shouldRenderDetails && (
-          <pre
-            style={{
-              marginTop: "10px",
-              backgroundColor: "#1e1e1e",
-              padding: "8px",
-              borderRadius: "4px",
-              overflowX: "auto",
-              fontSize: "0.85rem",
-              maxHeight: "300px",
-            }}
-          >
-            {JSON.stringify(displayableDetails, null, 2)}
-          </pre>
-        )} */}
+        {/* Workflow Proposal Card */}
+        {msg.role === 'assistant' && (() => {
+          const proposal = extractWorkflowProposal(msg);
+          if (proposal) return renderWorkflowProposalCard(proposal, msg.id);
+          return null;
+        })()}
       </>
     );
   };

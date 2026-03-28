@@ -1,0 +1,168 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Price history storage with atomic product entries, delta tracking, and change audit trail",
+  "generated_at": "2026-03-21T00:00:00Z",
+  "products": {
+    "PROD-001": {
+      "product_id": "PROD-001",
+      "product_name": "Wireless Bluetooth Headphones",
+      "pricing": {
+        "current": {
+          "amount": 79.99,
+          "currency": "USD",
+          "timestamp": "2026-03-21T08:30:00Z",
+          "source": "api",
+          "is_available": true
+        },
+        "previous": {
+          "amount": 99.99,
+          "currency": "USD",
+          "timestamp": "2026-03-20T14:15:00Z",
+          "source": "api",
+          "is_available": true
+        }
+      },
+      "statistics": {
+        "total_changes": 1,
+        "first_tracked": "2026-03-20T14:15:00Z",
+        "last_updated": "2026-03-21T08:30:00Z",
+        "lowest_price": {
+          "amount": 79.99,
+          "timestamp": "2026-03-21T08:30:00Z"
+        },
+        "highest_price": {
+          "amount": 99.99,
+          "timestamp": "2026-03-20T14:15:00Z"
+        },
+        "average_price": 89.99
+      },
+      "change_history": [
+        {
+          "change_id": "chg-001-001",
+          "timestamp": "2026-03-21T08:30:00Z",
+          "old_amount": 99.99,
+          "new_amount": 79.99,
+          "absolute_change": -20.00,
+          "percentage_change": -20.0,
+          "change_type": "price_drop",
+          "trigger": "sale_event",
+          "source": "api",
+          "notified": false,
+          "metadata": {
+            "reason": "weekend_promotion",
+            "promo_code": "WKND20"
+          }
+        }
+      ]
+    },
+    "PROD-002": {
+      "product_id": "PROD-002",
+      "product_name": "Smart Fitness Watch",
+      "pricing": {
+        "current": {
+          "amount": 199.99,
+          "currency": "USD",
+          "timestamp": "2026-03-21T09:00:00Z",
+          "source": "api",
+          "is_available": true
+        },
+        "previous": {
+          "amount": 199.99,
+          "currency": "USD",
+          "timestamp": "2026-03-20T10:00:00Z",
+          "source": "api",
+          "is_available": true
+        }
+      },
+      "statistics": {
+        "total_changes": 0,
+        "first_tracked": "2026-03-20T10:00:00Z",
+        "last_updated": "2026-03-21T09:00:00Z",
+        "lowest_price": {
+          "amount": 199.99,
+          "timestamp": "2026-03-20T10:00:00Z"
+        },
+        "highest_price": {
+          "amount": 199.99,
+          "timestamp": "2026-03-20T10:00:00Z"
+        },
+        "average_price": 199.99
+      },
+      "change_history": []
+    }
+  },
+  "metadata": {
+    "total_products_tracked": 2,
+    "products_with_changes": 1,
+    "last_scan_timestamp": "2026-03-21T09:00:00Z",
+    "next_scan_scheduled": "2026-03-21T10:00:00Z",
+    "storage": {
+      "format": "atomic_product_entries",
+      "index_strategy": "product_id_hashmap",
+      "compression": "none",
+      "max_history_per_product": 100
+    },
+    "data_quality": {
+      "integrity_check": "passed",
+      "orphaned_records": 0,
+      "stale_entries": 0
+    }
+  },
+  "_schema": {
+    "product_entry": {
+      "product_id": "string - unique identifier",
+      "product_name": "string - human-readable name",
+      "pricing": {
+        "current": {
+          "amount": "number - current price",
+          "currency": "string - ISO 4217 code",
+          "timestamp": "string - ISO 8601 datetime",
+          "source": "string - data source identifier",
+          "is_available": "boolean - product availability"
+        },
+        "previous": {
+          "amount": "number - previous price",
+          "currency": "string - ISO 4217 code",
+          "timestamp": "string - ISO 8601 datetime",
+          "source": "string - data source identifier",
+          "is_available": "boolean - availability at that time"
+        }
+      },
+      "statistics": {
+        "total_changes": "integer - count of price changes",
+        "first_tracked": "string - ISO 8601 datetime",
+        "last_updated": "string - ISO 8601 datetime",
+        "lowest_price": {
+          "amount": "number - all-time low",
+          "timestamp": "string - when it occurred"
+        },
+        "highest_price": {
+          "amount": "number - all-time high",
+          "timestamp": "string - when it occurred"
+        },
+        "average_price": "number - mean price over time"
+      },
+      "change_history": [
+        {
+          "change_id": "string - unique change identifier",
+          "timestamp": "string - when change detected",
+          "old_amount": "number - price before change",
+          "new_amount": "number - price after change",
+          "absolute_change": "number - delta amount",
+          "percentage_change": "number - delta percentage",
+          "change_type": "enum: price_drop|price_increase|out_of_stock|back_in_stock",
+          "trigger": "string - what caused the change",
+          "source": "string - data source",
+          "notified": "boolean - alert sent status",
+          "metadata": "object - additional context"
+        }
+      ]
+    },
+    "comparison_operations": {
+      "quick_delta_check": "Compare pricing.current.amount vs pricing.previous.amount",
+      "trend_analysis": "Analyze change_history array for patterns",
+      "price_anomaly_detection": "Compare current against statistics.lowest_price/highest_price",
+      "availability_tracking": "Monitor pricing.current.is_available transitions"
+    }
+  }
+}

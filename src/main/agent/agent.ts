@@ -73,7 +73,7 @@ export class Agent {
 
       try {
         // 1. Prepare messages for LLM
-        const messages: ChatMessage[] = this.history.map((m) => {
+        const messages: ChatMessage[] = this.sanitizeHistory(this.history).map((m) => {
           const base: any = {
             role: m.role,
             content: m.content as any, // Cast for compatibility with ChatMessage
@@ -118,7 +118,11 @@ export class Agent {
 
         // Handle Tool Calls (Object response)
         if (typeof response === "object" && response.tool_calls) {
-          const toolCalls = response.tool_calls;
+          // Ensure every tool_call has an id (some models like kimi/local LLMs may not return one)
+          const toolCalls = response.tool_calls.map((tc: any) => ({
+            ...tc,
+            id: tc.id || `call_${randomUUID().replace(/-/g, '').slice(0, 24)}`,
+          }));
           const assistantMsg: AgentMessage = {
             role: "assistant",
             content: response.content || null,
@@ -142,7 +146,11 @@ export class Agent {
               return finalAnswer || "[Task aborted]";
             }
 
-            const functionName = toolCall.function.name;
+            let functionName = toolCall.function.name;
+            // Some models (e.g. Kimi) prepend 'functions.' to tool call names — strip it
+            if (functionName.startsWith('functions.')) {
+              functionName = functionName.slice('functions.'.length);
+            }
             const argsString = toolCall.function.arguments;
             const toolCallId = toolCall.id;
 
@@ -156,10 +164,11 @@ export class Agent {
             try {
               const args = JSON.parse(argsString);
 
-              // Verify permission
+              // Verify permission — reject tools not in the agent's allowed list
               if (!this.config.tools.includes(functionName)) {
-                // Strict check? Or allow if LLM hallucinates built-in names?
-                // Let's rely on ToolRegistry to handle unknown tools or implement check here
+                throw new Error(
+                  `Tool ${functionName} not permitted for agent ${this.config.name}`,
+                );
               }
 
               // Race tool execution against abort signal
@@ -387,7 +396,7 @@ export class Agent {
   }
 
   public setHistory(messages: AgentMessage[]) {
-    this.history = messages;
+    this.history = this.sanitizeHistory(messages);
   }
 
   public getHistory(): AgentMessage[] {
@@ -419,6 +428,72 @@ export class Agent {
       .join("\n\n");
   }
 
+  /**
+   * Sanitize history to ensure tool_calls/tool message pairing is valid.
+   * - Removes orphaned 'tool' messages that lack a preceding assistant+tool_calls
+   * - Strips tool_calls from assistant messages whose tool results are missing
+   * - Converts orphaned tool messages to system observations so context isn't lost
+   */
+  private sanitizeHistory(messages: AgentMessage[]): AgentMessage[] {
+    const result: AgentMessage[] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const msg = messages[i];
+
+      if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+        // Collect all expected tool_call_ids
+        const expectedIds = new Set(msg.tool_calls.map((tc: any) => tc.id).filter(Boolean));
+        
+        // Look ahead for matching tool messages
+        const toolMessages: AgentMessage[] = [];
+        let j = i + 1;
+        while (j < messages.length && messages[j].role === "tool") {
+          toolMessages.push(messages[j]);
+          j++;
+        }
+
+        // Check if all tool_calls have matching tool messages
+        const foundIds = new Set(toolMessages.map(m => m.tool_call_id).filter(Boolean));
+        const allMatched = expectedIds.size > 0 && [...expectedIds].every(id => foundIds.has(id));
+
+        if (allMatched) {
+          // All good, keep assistant + tool messages as-is
+          result.push(msg);
+          for (const tm of toolMessages) {
+            result.push(tm);
+          }
+        } else {
+          // Broken pairing — convert to plain assistant message
+          logger.warn(`[Agent] sanitizeHistory: stripped tool_calls from assistant message (expected ${expectedIds.size} tools, found ${foundIds.size} matches)`);
+          result.push({
+            role: "assistant",
+            content: msg.content || "(used tools)",
+          });
+          // Convert orphaned tool results into system observations
+          for (const tm of toolMessages) {
+            result.push({
+              role: "user",
+              content: `[Tool Result for ${tm.name || 'unknown'}]:\n${typeof tm.content === 'string' ? tm.content : JSON.stringify(tm.content)}`,
+            });
+          }
+        }
+        i = j;
+      } else if (msg.role === "tool") {
+        // Orphaned tool message (no preceding assistant+tool_calls)
+        logger.warn(`[Agent] sanitizeHistory: converting orphaned tool message to system observation`);
+        result.push({
+          role: "user",
+          content: `[Tool Result for ${msg.name || 'unknown'}]:\n${typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}`,
+        });
+        i++;
+      } else {
+        result.push(msg);
+        i++;
+      }
+    }
+    return result;
+  }
+
   private async compressHistoryIfNeeded(): Promise<void> {
     const maxInputTokens = this.config.modelConfig.inputMaxTokens;
     if (!maxInputTokens) return;
@@ -439,17 +514,36 @@ export class Agent {
 
     // Compression Strategy:
     // 1. Keep System Prompt (Index 0)
-    // 2. Keep last N messages (e.g., last 4 turns) to maintain immediate context
-    // 3. Summarize the middle part
-
-    if (this.history.length <= 3) return; // Can't compress much if very short
+    // 2. For many messages (>3): keep last N messages, summarize the middle
+    // 3. For few but huge messages (≤3): summarize the largest non-system message content
 
     const systemPrompt = this.history[0];
-    const lastMessagesCount = Math.min(4, Math.floor(this.history.length / 2));
-    const recentHistory = this.history.slice(-lastMessagesCount);
+    let messagesToSummarize: AgentMessage[];
+    let keepMessages: AgentMessage[];
 
-    const messagesToSummarize = this.history.slice(1, -lastMessagesCount);
-    if (messagesToSummarize.length === 0) return;
+    if (this.history.length <= 3) {
+      // Few messages but still over token limit — the messages themselves are huge
+      // (e.g., workflow context dump). Summarize the largest non-system message.
+      let largestIdx = 1;
+      let largestLen = 0;
+      for (let idx = 1; idx < this.history.length; idx++) {
+        const len = typeof this.history[idx].content === 'string'
+          ? this.history[idx].content!.length
+          : JSON.stringify(this.history[idx].content).length;
+        if (len > largestLen) {
+          largestLen = len;
+          largestIdx = idx;
+        }
+      }
+      messagesToSummarize = [this.history[largestIdx]];
+      keepMessages = this.history.filter((_, idx) => idx !== 0 && idx !== largestIdx);
+    } else {
+      // Many messages — keep system + last N, summarize the middle
+      const lastMessagesCount = Math.min(4, Math.floor(this.history.length / 2));
+      keepMessages = this.history.slice(-lastMessagesCount);
+      messagesToSummarize = this.history.slice(1, -lastMessagesCount);
+      if (messagesToSummarize.length === 0) return;
+    }
 
     // Use LLM to summarize
     try {
@@ -481,10 +575,10 @@ ${JSON.stringify(messagesToSummarize)}
         };
 
         // Reconstruct history
-        this.history = [systemPrompt, summaryMessage, ...recentHistory];
+        this.history = this.sanitizeHistory([systemPrompt, summaryMessage, ...keepMessages]);
 
         logger.info(
-          `[Agent] History compressed. New length: ${this.history.length}`,
+          `[Agent] History compressed and sanitized. New length: ${this.history.length}`,
         );
 
         // Persist compressed history to file if fileSessionStore is available

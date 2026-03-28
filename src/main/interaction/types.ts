@@ -1,8 +1,43 @@
 
 export interface InteractionMessage {
-  type: 'register' | 'register_ack' | 'auth_request' | 'auth_response' | 'message' | 'broadcast' | 'heartbeat' | 'session_request' | 'session_response' | 'session_history_request' | 'session_history_response' | 'device_list' | 'cancel_request' | 'request_cancelled';
+  type: 'register' | 'register_ack' | 'auth_request' | 'auth_response' | 'message' | 'broadcast' | 'heartbeat' | 'session_request' | 'session_response' | 'session_history_request' | 'session_history_response' | 'device_list' | 'cancel_request' | 'request_cancelled' | 'remote_control' | 'remote_control_response';
   payload: any;
   timestamp: number;
+}
+
+export type RemoteControlAction =
+  | 'screenshot'
+  | 'dom'
+  | 'click'
+  | 'type'
+  | 'scroll'
+  | 'eval'
+  | 'wait';
+
+export interface RemoteControlPayload {
+  requestId: string;
+  action: RemoteControlAction;
+  /** CSS selector for click/type/scroll */
+  selector?: string;
+  /** Text to type */
+  text?: string;
+  /** DOM query mode: skeleton | full | interactive | scoped */
+  mode?: 'skeleton' | 'full' | 'interactive' | 'scoped';
+  /** Scroll delta in px */
+  delta?: number;
+  /** JS expression for eval */
+  expression?: string;
+  /** Duration in ms for wait */
+  duration?: number;
+  /** File path to save screenshot */
+  savePath?: string;
+}
+
+export interface RemoteControlResponse {
+  requestId: string;
+  success: boolean;
+  data?: any;
+  error?: string;
 }
 
 export interface RegisterPayload {

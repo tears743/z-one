@@ -10,6 +10,12 @@ import { TaskManager } from "./control/manager";
 import { LLMService } from "./model/llm-service";
 import { Planner } from "./intelligence/planner";
 import { AgentFactory } from "./agent/factory";
+import { WorkflowEngine } from "./workflow/engine";
+import { WorkflowPlanner } from "./workflow/planner";
+import * as workflowStore from "./workflow/store";
+import { setWorkflowDeps } from "./execution/tools/workflow";
+import { setUserInputDeps } from "./execution/tools/user-input";
+import { setWorkflowContextDeps } from "./execution/tools/workflow-context";
 import {
   initDB,
   getAppSettings,
@@ -61,6 +67,9 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
+
+  // Pass mainWindow reference to InteractionManager for remote control
+  interactionManager.setMainWindow(mainWindow);
 }
 
 // This method will be called when Electron has finished
@@ -193,6 +202,128 @@ app.whenReady().then(async () => {
 
   // Link Interaction Manager with Planner
   interactionManager.setPlanner(planner);
+
+  // Initialize Workflow Engine
+  const workflowEngine = new WorkflowEngine(llmService, toolRegistry, agentFactory);
+  const workflowPlanner = new WorkflowPlanner(llmService, toolRegistry);
+
+  // Inject all deps into workflow tool (late binding since tools are registered before these are created)
+  setWorkflowDeps({
+    planner: workflowPlanner,
+    getAppSettings,
+    getModels,
+    getWorkflow: workflowStore.getWorkflow,
+    updateWorkflowStatus: workflowStore.updateWorkflowStatus,
+  });
+
+  // Inject engine into user-input tool for blocking input requests
+  setUserInputDeps({ engine: workflowEngine });
+  setWorkflowContextDeps({ engine: workflowEngine });
+
+  // Forward workflow events to renderer via IPC
+  workflowEngine.on('workflow:event', (event) => {
+    BrowserWindow.getAllWindows().forEach(win => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('workflow:event', event);
+      }
+    });
+  });
+
+  // Write CLI token to /tmp for CLI auto-auth
+  try {
+    const tokenPath = '/tmp/z-one-cli-token';
+    fs.writeFileSync(tokenPath, (interactionManager as any).internalToken, { mode: 0o600 });
+    console.log('CLI token written to', tokenPath);
+  } catch (e) {
+    console.error('Failed to write CLI token:', e);
+  }
+
+  // ─── Workflow IPC Handlers ─────────────────────────────
+
+  ipcMain.removeHandler('workflow:list');
+  ipcMain.removeHandler('workflow:get');
+  ipcMain.removeHandler('workflow:create');
+  ipcMain.removeHandler('workflow:delete');
+  ipcMain.removeHandler('workflow:start');
+  ipcMain.removeHandler('workflow:pause');
+  ipcMain.removeHandler('workflow:resume');
+  ipcMain.removeHandler('workflow:cancel');
+  ipcMain.removeHandler('workflow:inject-message');
+  ipcMain.removeHandler('workflow:get-node-logs');
+  ipcMain.removeHandler('workflow:get-runs');
+  ipcMain.removeHandler('workflow:confirm-proposal');
+  ipcMain.removeHandler('workflow:submit-input');
+
+  ipcMain.handle('workflow:list', () => workflowStore.listWorkflows());
+  ipcMain.handle('workflow:get', (_, id) => workflowStore.getWorkflow(id));
+  ipcMain.handle('workflow:create', async (_, { request, modelConfig }) => {
+    const settings = getAppSettings();
+    const models = getModels();
+    const activeModel = models.find((m: any) => m.id === (settings?.activeModelId || ''));
+    const config = modelConfig || activeModel || models[0];
+    return await workflowPlanner.planOrRefine(request, config);
+  });
+  ipcMain.handle('workflow:delete', (_, id) => workflowStore.deleteWorkflow(id));
+  ipcMain.handle('workflow:start', async (_, { workflowId, deviceId, sessionId }) => {
+    return await workflowEngine.startRun(workflowId, deviceId, sessionId);
+  });
+  ipcMain.handle('workflow:pause', (_, runId) => workflowEngine.pauseRun(runId));
+  ipcMain.handle('workflow:resume', (_, runId) => workflowEngine.resumeRun(runId));
+  ipcMain.handle('workflow:cancel', (_, runId) => workflowEngine.cancelRun(runId));
+  ipcMain.handle('workflow:inject-message', (_, { runId, nodeId, content, source }) => {
+    return workflowEngine.injectMessage(runId, nodeId, content, source);
+  });
+  ipcMain.handle('workflow:get-node-logs', (_, { runId, nodeId }) => {
+    return workflowEngine.getNodeLogs(runId, nodeId);
+  });
+  ipcMain.handle('workflow:get-runs', (_, workflowId) => {
+    return workflowStore.getRunsByWorkflow(workflowId);
+  });
+  ipcMain.handle('workflow:confirm-proposal', (_, proposal) => {
+    const workflowId = proposal?.workflow?.id;
+    console.log('[IPC] confirm-proposal called with id:', workflowId);
+
+    // Check if workflow already exists in DB
+    let existing = workflowStore.getWorkflow(workflowId);
+
+    if (!existing && proposal?.workflow) {
+      // Workflow not in DB (stale localStorage reference) — re-create from proposal data
+      console.log('[IPC] Workflow not found, re-creating from proposal data');
+      const wf = proposal.workflow;
+      const now = Date.now();
+      const workflow = {
+        id: wf.id,
+        name: wf.name,
+        description: wf.description || '',
+        version: 1,
+        status: 'active' as const,
+        nodes: (wf.nodes || []).map((n: any) => ({
+          id: n.id,
+          label: n.label,
+          type: n.type || 'task',
+          description: n.description || '',
+          agentConfig: n.agentConfig || { name: n.label, persona: '', tools: n.tools || [] },
+          condition: n.condition,
+          position: n.position,
+        })),
+        edges: wf.edges || [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      workflowStore.saveWorkflow(workflow);
+      existing = workflowStore.getWorkflow(workflowId);
+      console.log('[IPC] Re-created workflow:', existing?.name);
+    } else if (existing) {
+      // Activate existing draft
+      workflowStore.updateWorkflowStatus(workflowId, 'active');
+      existing = workflowStore.getWorkflow(workflowId);
+    }
+
+    return existing || null;
+  });
+  ipcMain.handle('workflow:submit-input', (_, { runId, nodeId, input }) => {
+    return workflowEngine.submitInput(runId, nodeId, input);
+  });
 
   // IPC Handlers Registration (Before app.whenReady to avoid race conditions with renderer)
   // MCP Handlers

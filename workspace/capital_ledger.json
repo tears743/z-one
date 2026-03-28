@@ -1,0 +1,15 @@
+{
+    "ledger": {
+        "initial_capital": 100.0,
+        "revenues": [],
+        "expenses": [],
+        "balance": 100.0,
+        "safety_buffer": 100.0
+    },
+    "risk_management_protocols": {
+        "shutdown_triggers": {
+            "below_safety_buffer": true,
+            "negative_revenue_growth": false
+        }
+    }
+}

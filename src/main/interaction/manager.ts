@@ -7,7 +7,11 @@ import {
   RegisterPayload,
   AuthRequestPayload,
   AuthResponsePayload,
+  RemoteControlPayload,
+  RemoteControlResponse,
 } from "./types";
+import { generateDomQueryScript } from './dom-query';
+import * as fs from 'fs';
 import { getDevice, saveDevice, getModels, getAppSettings } from "../db";
 import { logger } from "../logger";
 
@@ -22,6 +26,11 @@ export class InteractionManager {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private planner: Planner | null = null;
   private messageQueue: MessageQueue | null = null;
+  private mainWindow: BrowserWindow | null = null;
+
+  public setMainWindow(win: BrowserWindow) {
+    this.mainWindow = win;
+  }
 
   constructor() {
     this.internalToken = randomUUID();
@@ -185,6 +194,9 @@ export class InteractionManager {
         break;
       case "cancel_request":
         this.handleCancelRequest(ws);
+        break;
+      case "remote_control":
+        this.handleRemoteControl(ws, message.payload as RemoteControlPayload);
         break;
     }
   }
@@ -678,6 +690,135 @@ export class InteractionManager {
       this.onBeforeMessageSend(ws, message);
       ws.send(JSON.stringify(message));
       this.onAfterMessageSend(ws, message);
+    }
+  }
+
+  // ─── Remote Control Handler ─────────────────────────────
+
+  private async handleRemoteControl(ws: WebSocket, payload: RemoteControlPayload) {
+    const respond = (success: boolean, data?: any, error?: string) => {
+      const resp: RemoteControlResponse = {
+        requestId: payload.requestId,
+        success,
+        data,
+        error,
+      };
+      this.sendTo(ws, {
+        type: 'remote_control_response',
+        payload: resp,
+        timestamp: Date.now(),
+      });
+    };
+
+    if (!this.mainWindow) {
+      respond(false, undefined, 'Main window not available');
+      return;
+    }
+
+    const webContents = this.mainWindow.webContents;
+
+    try {
+      switch (payload.action) {
+        case 'screenshot': {
+          const image = await this.mainWindow.capturePage();
+          const pngBuffer = image.toPNG();
+          const base64 = pngBuffer.toString('base64');
+          if (payload.savePath) {
+            fs.writeFileSync(payload.savePath, pngBuffer);
+          }
+          respond(true, { base64, size: pngBuffer.length, saved: !!payload.savePath });
+          break;
+        }
+        case 'dom': {
+          const script = generateDomQueryScript(payload.mode || 'interactive', payload.selector);
+          const result = await webContents.executeJavaScript(script);
+          respond(true, result);
+          break;
+        }
+        case 'click': {
+          if (!payload.selector) {
+            respond(false, undefined, 'selector required for click');
+            return;
+          }
+          const clickScript = `
+            (function() {
+              const el = document.querySelector(${JSON.stringify(payload.selector)});
+              if (!el) return { success: false, error: 'Element not found: ${payload.selector}' };
+              el.click();
+              return { success: true, tag: el.tagName, text: el.textContent?.slice(0, 50) };
+            })()
+          `;
+          const clickResult = await webContents.executeJavaScript(clickScript);
+          respond(clickResult.success, clickResult, clickResult.error);
+          break;
+        }
+        case 'type': {
+          if (!payload.selector || payload.text === undefined) {
+            respond(false, undefined, 'selector and text required for type');
+            return;
+          }
+          const typeScript = `
+            (function() {
+              const el = document.querySelector(${JSON.stringify(payload.selector)});
+              if (!el) return { success: false, error: 'Element not found: ${payload.selector}' };
+              el.focus();
+              if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+                  || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+                if (nativeInputValueSetter) {
+                  nativeInputValueSetter.call(el, ${JSON.stringify(payload.text)});
+                } else {
+                  el.value = ${JSON.stringify(payload.text)};
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } else {
+                el.textContent = ${JSON.stringify(payload.text)};
+              }
+              return { success: true };
+            })()
+          `;
+          const typeResult = await webContents.executeJavaScript(typeScript);
+          respond(typeResult.success, typeResult, typeResult.error);
+          break;
+        }
+        case 'scroll': {
+          const delta = payload.delta || 300;
+          const scrollScript = payload.selector
+            ? `(function() {
+                const el = document.querySelector(${JSON.stringify(payload.selector)});
+                if (!el) return { success: false, error: 'Element not found' };
+                el.scrollBy(0, ${delta});
+                return { success: true, scrollTop: el.scrollTop };
+              })()`
+            : `(function() {
+                window.scrollBy(0, ${delta});
+                return { success: true, scrollY: window.scrollY };
+              })()`;
+          const scrollResult = await webContents.executeJavaScript(scrollScript);
+          respond(scrollResult.success, scrollResult, scrollResult.error);
+          break;
+        }
+        case 'eval': {
+          if (!payload.expression) {
+            respond(false, undefined, 'expression required for eval');
+            return;
+          }
+          const evalResult = await webContents.executeJavaScript(payload.expression);
+          respond(true, evalResult);
+          break;
+        }
+        case 'wait': {
+          const duration = payload.duration || 1000;
+          await new Promise(resolve => setTimeout(resolve, duration));
+          respond(true, { waited: duration });
+          break;
+        }
+        default:
+          respond(false, undefined, `Unknown action: ${payload.action}`);
+      }
+    } catch (err: any) {
+      respond(false, undefined, err.message);
     }
   }
 
